@@ -39,7 +39,8 @@ if __name__ == '__main__':
     g = ca.DM.zeros(2)
     lba = 10
     qp = {'h': H.sparsity(), 'a': A.sparsity()}
-    S = ca.conic('S', 'qpoases', qp)
+    opts = {'print_problem': False, 'print_time': False, 'printLevel': 'none'}
+    S = ca.conic('S', 'qpoases', qp, opts)
     r = S(h=H, g=g, a=A, lba=lba)
     x_opt = r['x']
     print('x_opt:', x_opt)
