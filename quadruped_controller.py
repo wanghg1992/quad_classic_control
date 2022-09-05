@@ -87,9 +87,103 @@ class Estimation:
         return [self.pb_, self.Jfoot, self.Jdfoot]
 
 class Planner:
-    def __init__(self):
-        self.pb = np.asarray([0, 0, 0.16, 0., 0., 0., 1.])
-        self.vb = np.asarray([0] * 6)
+    def __init__(self, model):
+        self.timer = .0
+        self.dt = 0.001
+        self.iterPerPlan = 10
+        self.dtPlan = self.iterPerPlan * self.dt
+        self.horizon = 200
+        self.gait = 'trot'
+        self.segments = np.asarray([0, 0, 0, 0])
+        self.duration = np.asarray([0, 0, 0, 0])
+        self.offset = np.asarray([0, 0, 0, 0])
+        self.contact_state = np.asarray([0, 0, 0, 0])
+        self.swing_phase = np.asarray([.0, .0, .0, .0])
+        self.contact_phase = np.asarray([.0, .0, .0, .0])
+        self.first_swing = np.asarray([True, True, True, True])
+        self.first_contact = np.asarray([True, True, True, True])
+        self.phase_abnormal = False
+        self.pf_init = np.asarray([.0] * 12)
+        self.pf_hold = np.asarray([.0] * 12)
+        self.pf = np.asarray([.0] * 12)
+        self.ph_body = np.asarray([0.1, -0.05, .0,   0.1, 0.05, .0,   -0.1, -0.05, .0,   -0.1, 0.05, .0])
+        self.pb = np.asarray([.0, .0, 0.16, 0., 0., 0., 1.])
+        self.vb = np.asarray([.0] * 6)
+        self.model = model
+        self.data = self.model.createData()
+
+    def get_contact_target(self, time):
+        if self.gait == 'trot':
+            self.segments = np.asarray([20, 20, 20, 20])
+            self.duration = np.asarray([10, 10, 10, 10])
+            self.offset = np.asarray([0, 10, 10, 0])
+        # iter = time / self.dt
+        iterPlan = time / self.dtPlan
+        for leg in range(4):
+            normIterPlan = (iterPlan + self.segments[leg] - self.offset[leg]) % self.segments[leg]
+            self.contact_state[leg] = normIterPlan < self.duration[leg]
+        return self.contact_state
+
+    def get_step_phase(self, time):
+        if self.gait == 'trot':
+            self.segments = np.asarray([20, 20, 20, 20])
+            self.duration = np.asarray([10, 10, 10, 10])
+            self.offset = np.asarray([0, 10, 10, 0])
+        iter = time / self.dt
+        # iterPlan = time / self.dtPlan
+        for leg in range(4):
+            normIter = (iter + self.segments[leg] * self.iterPerPlan  - self.offset[leg] * self.iterPerPlan ) % ( self.segments[leg] * self.iterPerPlan )
+            if normIter < self.duration[leg] * self.iterPerPlan:
+                self.contact_phase[leg] = normIter / float(self.duration[leg] * self.iterPerPlan)
+                self.swing_phase[leg] = 0
+            else:
+                self.contact_phase[leg] = 0
+                self.swing_phase[leg] = (normIter - self.duration[leg] * self.iterPerPlan) / float( (self.segments[leg]- self.duration[leg]) * self.iterPerPlan )
+        return [self.contact_phase, self.swing_phase]
+
+    def update_step_phase(self):
+        self.get_step_phase(self.timer)
+
+    def update_body_target(self):
+        body_pos_des = np.asmatrix([0, 0, 0.16])
+        body_rot_des = R.from_matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        return [body_pos_des, body_rot_des]
+
+    def update_foot_target(self, est_data):
+        for leg in range(4):
+            if self.contact_phase[leg] > 0.0001:        # contact phase
+                self.first_swing[leg] = True
+                # if self.first_contact[leg]:
+                self.pf[leg*3 + 0] = self.pf_hold[leg*3 + 0]
+                self.pf[leg*3 + 1] = self.pf_hold[leg*3 + 1]
+                self.pf[leg*3 + 2] = self.pf_hold[leg*3 + 2]
+
+            elif self.swing_phase[leg] > 0.0001:        # swing_phase
+                self.first_contact[leg] = True
+                if self.first_swing[leg]:
+                    self.pf_init = est_data.pf_
+                self.pf_hold[leg*3 + 0] = self.ph_body[leg*3 + 0]
+                self.pf_hold[leg*3 + 1] = self.ph_body[leg*3 + 1]
+                self.pf_hold[leg*3 + 2] = self.ph_body[leg*3 + 2]
+                self.pf[leg*3 + 0] = self.pf_init[leg*3 + 0] + (self.pf_hold[leg*3 + 0] - self.pf_init[leg*3 + 0])*self.swing_phase[leg]
+                self.pf[leg*3 + 1] = self.pf_init[leg*3 + 0] + (self.pf_hold[leg*3 + 0] - self.pf_init[leg*3 + 0])*self.swing_phase[leg]
+                self.pf[leg*3 + 2] = self.pf_init[leg*3 + 0] + (math.cos((self.swing_phase[leg]-0.5)*3.14/2)+1)/2*0.06
+
+    def phase_abnormal_handle(self):
+        if 0 == [[e > 1.0 for e in self.contact_phase] + [e > 1.0 for e in self.swing_phase]].count(True):
+            self.phase_abnormal = False
+        else:
+            self.phase_abnormal = True
+
+    def step(self, est_data):
+        if not self.phase_abnormal:
+            self.timer = self.timer + self.dt
+        self.update_step_phase()
+        self.phase_abnormal_handle()
+        self.update_body_target()
+        self.update_foot_target(est_data)
+        return self.pb
+
 
 class Controller:
     def __init__(self, model):
@@ -253,16 +347,16 @@ if __name__ == '__main__':
     model = pin.buildModelFromUrdf(pybullet_data.getDataPath() + '/urdf/quadruped_robot/quadruped_robot.urdf',
                                    root)
     # model = pin.buildModelFromUrdf(pybullet_data.getDataPath()+'/urdf/quadruped_robot/quadruped_robot.urdf')
-    data = model.createData()
 
     torque = [.0] * 12
 
     est = Estimation(model)
-    plan = Planner()
-    control = Controller()
+    plan = Planner(model)
+    control = Controller(model)
     for i in range(100000):
 
         # simulation
+        # leg order: LF-LH-RF-RH
         torque = list(torque[0:3])+ list(torque[6:9])+ list(torque[3:6])+ list(torque[9:12])
         [o_, pb_, vb_, js_] = env.step_torque(torque)
         js_ = list(js_[0:3]) + list(js_[6:9]) + list(js_[3:6]) + list(js_[9:12])
@@ -279,6 +373,8 @@ if __name__ == '__main__':
         est.vb_[0:3] = vb_[0]
         est.vb_[3:6] = vb_[1]
         est.step()
+
+        plan.step(est)
 
         torque = control.step(est, plan)
 
