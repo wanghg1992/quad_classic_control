@@ -15,6 +15,13 @@ from scipy.spatial.transform import Rotation as R
 
 import math
 
+from geometry_msgs import msg as gmsg
+from geometry_msgs.msg import Transform
+import tf2_ros
+import rospy
+from tf.transformations import quaternion_from_euler
+from nav_msgs import msg as nmsg
+
 class Estimation:
     def __init__(self, model):
         self.q_ = np.asarray([0] * 19)
@@ -336,6 +343,137 @@ class Controller:
     def step(self, est, plan):
         return self.optimal_control(est, plan)
 
+class RosPublish:
+    def __init__(self, model):
+        self.model = model
+
+        # msg publish
+        # publish path
+        self.rf_foot_path = nmsg.Path()
+        self.lf_foot_path = nmsg.Path()
+        self.rh_foot_path = nmsg.Path()
+        self.lh_foot_path = nmsg.Path()
+        self.foot_path = [self.rf_foot_path, self.lf_foot_path, self.rh_foot_path, self.lh_foot_path]
+        self.rf_foot_path_pub = rospy.Publisher('rf_foot_trajectory', nmsg.Path, queue_size=10)
+        self.lf_foot_path_pub = rospy.Publisher('lf_foot_trajectory', nmsg.Path, queue_size=10)
+        self.rh_foot_path_pub = rospy.Publisher('rh_foot_trajectory', nmsg.Path, queue_size=10)
+        self.lh_foot_path_pub = rospy.Publisher('lh_foot_trajectory', nmsg.Path, queue_size=10)
+        self.foot_path_pub = [self.rf_foot_path_pub, self.lf_foot_path_pub, self.rh_foot_path_pub, self.lh_foot_path_pub]
+
+        # publish point
+        self.foot_point = [gmsg.PointStamped(), gmsg.PointStamped(), gmsg.PointStamped(), gmsg.PointStamped()]
+        self.foot_point_pub = [rospy.Publisher('rf_foot_point', gmsg.PointStamped, queue_size=10),
+                               rospy.Publisher('lf_foot_point', gmsg.PointStamped, queue_size=10),
+                               rospy.Publisher('rh_foot_point', gmsg.PointStamped, queue_size=10),
+                               rospy.Publisher('lh_foot_point', gmsg.PointStamped, queue_size=10)]
+
+        rospy.init_node('talker', anonymous=True)
+
+    def step(self, est, plan):
+        self.pub_tf(est, plan)
+        self.pub_path(est, plan)
+        self.pub_point(est, plan)
+
+    def pub_tf(self, est, plan):
+
+        def pub_tf_body_link():
+            tf_body_ = Transform(
+                translation=gmsg.Vector3(est.pb_[0], est.pb_[1], est.pb_[2]),
+                rotation=gmsg.Quaternion(est.pb_[3], est.pb_[4], est.pb_[5], est.pb_[6])
+            )
+
+            st = gmsg.TransformStamped()
+            st.header.frame_id = 'world'
+            st.child_frame_id = 'body_link'
+            st.transform = tf_body_
+            st.header.stamp = rospy.Time.now()
+
+            br = tf2_ros.TransformBroadcaster()
+            br.sendTransform(st)
+
+        def pub_tf_leg_link():
+            def pub_tf_single_link(plink, clink, p_offset, axis, angle):
+                translation = gmsg.Vector3(p_offset[0], p_offset[1], p_offset[2])
+                if 'x' == axis:
+                    quat = quaternion_from_euler(angle, 0, 0)
+                elif 'y' == axis:
+                    quat = quaternion_from_euler(0, angle, 0)
+                rotation = gmsg.Quaternion(quat[0], quat[1], quat[2], quat[3])
+
+                tf_link_ = Transform(translation, rotation)
+
+                st = gmsg.TransformStamped()
+                st.header.frame_id = plink
+                st.child_frame_id = clink
+                st.transform = tf_link_
+                st.header.stamp = rospy.Time.now()
+
+                br = tf2_ros.TransformBroadcaster()
+                br.sendTransform(st)
+
+            pub_tf_single_link('body_link', 'LF1_link', [0.0915,  0.08, 0], 'x', est.q_[7 + 0])
+            pub_tf_single_link('LF1_link', 'LF2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 1])
+            pub_tf_single_link('LF2_link', 'LF3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 2])
+            pub_tf_single_link('LF3_link', 'LFFoot_link', [0.0, 0.0, -0.065], 'x', 0)
+
+            pub_tf_single_link('body_link', 'LH1_link', [-0.0915, 0.08, 0], 'x', est.q_[7 + 3])
+            pub_tf_single_link('LH1_link', 'LH2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 4])
+            pub_tf_single_link('LH2_link', 'LH3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 5])
+            pub_tf_single_link('LH3_link', 'LHFoot_link', [0.0, 0.0, -0.065], 'x', 0)
+
+            pub_tf_single_link('body_link', 'RF1_link', [0.0915, -0.08, 0], 'x', est.q_[7 + 6])
+            pub_tf_single_link('RF1_link', 'RF2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 7])
+            pub_tf_single_link('RF2_link', 'RF3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 8])
+            pub_tf_single_link('RF3_link', 'RFFoot_link', [0.0, 0.0, -0.065], 'x', 0)
+
+            pub_tf_single_link('body_link', 'RH1_link', [-0.0915, -0.08, 0], 'x', est.q_[7 + 9])
+            pub_tf_single_link('RH1_link', 'RH2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 10])
+            pub_tf_single_link('RH2_link', 'RH3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 11])
+            pub_tf_single_link('RH3_link', 'RHFoot_link', [0.0, 0.0, -0.065], 'x', 0)
+
+        pub_tf_body_link()
+        pub_tf_leg_link()
+
+    def pub_path(self, est, plan):
+
+        def pub_foot_path(leg_id):
+            self.foot_path[leg_id].header.frame_id = "world"
+            self.foot_path[leg_id].header.stamp = rospy.Time.now()
+
+            pose = gmsg.PoseStamped()
+            pose.header.frame_id = 'world'
+            pose.header.stamp = rospy.Time.now()
+            pose.pose.position.x = est.pf_[leg_id*3 + 0]
+            pose.pose.position.y = est.pf_[leg_id*3 + 1]
+            pose.pose.position.z = est.pf_[leg_id*3 + 2]
+            quaternion = quaternion_from_euler(
+                0, 0, 0)
+            pose.pose.orientation.x = quaternion[0]
+            pose.pose.orientation.y = quaternion[1]
+            pose.pose.orientation.z = quaternion[2]
+            pose.pose.orientation.w = quaternion[3]
+            self.foot_path[leg_id].poses.append(pose)
+
+            self.foot_path_pub[leg_id].publish(self.foot_path[leg_id])
+
+        pub_foot_path(0)
+        pub_foot_path(1)
+        pub_foot_path(2)
+        pub_foot_path(3)
+
+    def pub_point(self, est, plan):
+        def pub_foot_point(leg_id):
+            self.foot_point[leg_id].header.frame_id = 'world'
+            self.foot_point[leg_id].header.stamp = rospy.Time.now()
+            self.foot_point[leg_id].point.x = est.pf_[leg_id*3 + 0]
+            self.foot_point[leg_id].point.y = est.pf_[leg_id*3 + 1]
+            self.foot_point[leg_id].point.z = est.pf_[leg_id*3 + 2]
+            self.foot_point_pub[leg_id].publish(self.foot_point[leg_id])
+
+        pub_foot_point(0)
+        pub_foot_point(1)
+        pub_foot_point(2)
+        pub_foot_point(3)
 
 
 if __name__ == '__main__':
@@ -353,6 +491,7 @@ if __name__ == '__main__':
     est = Estimation(model)
     plan = Planner(model)
     control = Controller(model)
+    rospub = RosPublish(model)
     for i in range(100000):
 
         # simulation
@@ -377,6 +516,8 @@ if __name__ == '__main__':
         plan.step(est)
 
         torque = control.step(est, plan)
+
+        rospub.step(est, plan)
 
         # env.render()
     input("press any key to continue...")
