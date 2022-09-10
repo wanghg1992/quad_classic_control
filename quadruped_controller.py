@@ -27,9 +27,11 @@ from visualization_msgs import msg as vmsg
 class Estimation:
     def __init__(self, model):
         self.q_ = np.asarray([0] * 19)
+        self.dq_ = np.asarray([0] * 18)
         self.pb_ = np.asarray([0, 0, 0.16, 0., 0., 0., 1.])
-        self.pf_ = np.asarray([0] * 12)
-        self.vb_ = np.asarray([0, 0, 0, 0., 0., 0.])
+        self.pf_ = np.asarray([0.] * 12)
+        self.vb_ = np.asarray([0.] * 6)
+        self.vf_ = np.asarray([0.] * 12)
         self.model = model
         self.data = self.model.createData()
 
@@ -50,8 +52,10 @@ class Estimation:
     def step(self):
         model = self.model
         data = self.data
+        q_ = self.q_
+        dq_ = self.dq_
 
-        pin.forwardKinematics(model, data, q_)
+        pin.forwardKinematics(model, data, q_, dq_)
         pin.updateFramePlacements(model, data)
         # for frame, oMf in zip(model.frames, data.oMf):
         #     print(("{:<24} : {: .2f} {: .2f} {: .2f}"
@@ -63,6 +67,17 @@ class Estimation:
         self.pf_ = np.append(pf_rf_, pf_lf_, axis=0)
         self.pf_ = np.append(self.pf_, pf_rh_, axis=0)
         self.pf_ = np.append(self.pf_, pf_lh_, axis=0)
+        vf_rf_ = np.matrix(
+            pin.getFrameVelocity(model, data, model.getFrameId('RF4_joint'), pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)).T
+        vf_lf_ = np.matrix(
+            pin.getFrameVelocity(model, data, model.getFrameId('LF4_joint'), pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)).T
+        vf_rh_ = np.matrix(
+            pin.getFrameVelocity(model, data, model.getFrameId('RH4_joint'), pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)).T
+        vf_lh_ = np.matrix(
+            pin.getFrameVelocity(model, data, model.getFrameId('LH4_joint'), pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)).T
+        self.vf_ = np.append(vf_rf_[0:3, :], vf_lf_[0:3, :], axis=0)
+        self.vf_ = np.append(self.vf_, vf_rh_[0:3, :], axis=0)
+        self.vf_ = np.append(self.vf_, vf_lh_[0:3, :], axis=0)
 
         pin.computeJointJacobians(model, data, q_)
         self.JB = np.matrix(
