@@ -19,8 +19,10 @@ from geometry_msgs import msg as gmsg
 from geometry_msgs.msg import Transform
 import tf2_ros
 import rospy
+import tf.transformations as transformations
 from tf.transformations import quaternion_from_euler
 from nav_msgs import msg as nmsg
+from visualization_msgs import msg as vmsg
 
 class Estimation:
     def __init__(self, model):
@@ -367,12 +369,38 @@ class RosPublish:
                                rospy.Publisher('rh_foot_point', gmsg.PointStamped, queue_size=10),
                                rospy.Publisher('lh_foot_point', gmsg.PointStamped, queue_size=10)]
 
+        # publish pose
+        # self.foot_pose = [gmsg.PoseStamped(), gmsg.PoseStamped(), gmsg.PoseStamped(), gmsg.PoseStamped()]
+        # self.foot_pose_pub = [rospy.Publisher('rf_foot_pose', gmsg.PoseStamped, queue_size=10),
+        #                        rospy.Publisher('lf_foot_pose', gmsg.PoseStamped, queue_size=10),
+        #                        rospy.Publisher('rh_foot_pose', gmsg.PoseStamped, queue_size=10),
+        #                        rospy.Publisher('lh_foot_pose', gmsg.PoseStamped, queue_size=10)]
+
+        # publish wrench
+        # self.foot_force = [gmsg.WrenchStamped(), gmsg.WrenchStamped(), gmsg.WrenchStamped(), gmsg.WrenchStamped()]
+        # self.foot_force_pub = [rospy.Publisher('rf_foot_force', gmsg.WrenchStamped, queue_size=10),
+        #                        rospy.Publisher('lf_foot_force', gmsg.WrenchStamped, queue_size=10),
+        #                        rospy.Publisher('rh_foot_force', gmsg.WrenchStamped, queue_size=10),
+        #                        rospy.Publisher('lh_foot_force', gmsg.WrenchStamped, queue_size=10)]
+
+        # publish marker
+        self.foot_marker = [vmsg.Marker(), vmsg.Marker(), vmsg.Marker(), vmsg.Marker()]
+        self.foot_marker_pub = [rospy.Publisher('rf_foot_marker', vmsg.Marker, queue_size=10),
+                               rospy.Publisher('lf_foot_marker', vmsg.Marker, queue_size=10),
+                               rospy.Publisher('rh_foot_marker', vmsg.Marker, queue_size=10),
+                               rospy.Publisher('lh_foot_marker', vmsg.Marker, queue_size=10)]
+
+
+
         rospy.init_node('talker', anonymous=True)
 
     def step(self, est, plan):
         self.pub_tf(est, plan)
         self.pub_path(est, plan)
         self.pub_point(est, plan)
+        # self.pub_pose(est, plan)
+        # self.pub_wrench(est, plan)
+        self.pub_marker(est, plan)
 
     def pub_tf(self, est, plan):
 
@@ -443,9 +471,12 @@ class RosPublish:
             pose = gmsg.PoseStamped()
             pose.header.frame_id = 'world'
             pose.header.stamp = rospy.Time.now()
-            pose.pose.position.x = est.pf_[leg_id*3 + 0]
-            pose.pose.position.y = est.pf_[leg_id*3 + 1]
-            pose.pose.position.z = est.pf_[leg_id*3 + 2]
+            # pose.pose.position.x = est.pf_[leg_id*3 + 0]
+            # pose.pose.position.y = est.pf_[leg_id*3 + 1]
+            # pose.pose.position.z = est.pf_[leg_id*3 + 2]
+            pose.pose.position.x = plan.pf[leg_id*3 + 0]
+            pose.pose.position.y = plan.pf[leg_id*3 + 1]
+            pose.pose.position.z = plan.pf[leg_id*3 + 2]
             quaternion = quaternion_from_euler(
                 0, 0, 0)
             pose.pose.orientation.x = quaternion[0]
@@ -475,6 +506,70 @@ class RosPublish:
         pub_foot_point(2)
         pub_foot_point(3)
 
+    # def pub_pose(self, est, plan):
+    #     def pub_foot_pose(leg_id):
+    #         self.foot_pose[leg_id].header.frame_id = 'world'
+    #         self.foot_pose[leg_id].header.stamp = rospy.Time.now()
+    #         self.foot_pose[leg_id].pose.position.x = 0
+    #         self.foot_pose[leg_id].pose.position.y = 0
+    #         self.foot_pose[leg_id].pose.position.z = 1
+    #         self.foot_pose[leg_id].pose.orientation.x = 0
+    #         self.foot_pose[leg_id].pose.orientation.y = 0
+    #         self.foot_pose[leg_id].pose.orientation.z = 0
+    #         self.foot_pose[leg_id].pose.orientation.w = 1
+    #         self.foot_pose_pub[leg_id].publish(self.foot_pose[leg_id])
+    #
+    #     pub_foot_pose(0)
+    #     pub_foot_pose(1)
+    #     pub_foot_pose(2)
+    #     pub_foot_pose(3)
+
+    # def pub_wrench(self, est, plan):
+    #     def pub_foot_force(leg_id):
+    #         self.foot_force[leg_id].header.frame_id = 'LFFoot_link'
+    #         self.foot_force[leg_id].header.stamp = rospy.Time.now()
+    #         self.foot_force[leg_id].wrench.force.x = 0
+    #         self.foot_force[leg_id].wrench.force.y = 0
+    #         self.foot_force[leg_id].wrench.force.z = 1
+    #         self.foot_force[leg_id].wrench.torque.x = 0
+    #         self.foot_force[leg_id].wrench.torque.y = 0
+    #         self.foot_force[leg_id].wrench.torque.z = 0
+    #         self.foot_force_pub[leg_id].publish(self.foot_force[leg_id])
+    #
+    #     pub_foot_force(0)
+    #     pub_foot_force(1)
+    #     pub_foot_force(2)
+    #     pub_foot_force(3)
+
+    def pub_marker(self, est, plan):
+        def pub_foot_marker(leg_id):
+            self.foot_marker[leg_id].header.frame_id = 'world'
+            self.foot_marker[leg_id].header.stamp = rospy.Time.now()
+            self.foot_marker[leg_id].ns = 'my_namespace'
+            self.foot_marker[leg_id].id = leg_id
+            self.foot_marker[leg_id].type = vmsg.Marker.ARROW
+            self.foot_marker[leg_id].action = vmsg.Marker.MODIFY
+            self.foot_marker[leg_id].pose.position.x = est.pf_[leg_id*3 + 0]
+            self.foot_marker[leg_id].pose.position.y = est.pf_[leg_id*3 + 1]
+            self.foot_marker[leg_id].pose.position.z = est.pf_[leg_id*3 + 2]
+            self.foot_marker[leg_id].pose.orientation.x = 0
+            self.foot_marker[leg_id].pose.orientation.y = 0
+            self.foot_marker[leg_id].pose.orientation.z = 0
+            self.foot_marker[leg_id].pose.orientation.w = 1
+            self.foot_marker[leg_id].scale.x = plan.contact_phase[leg_id]*0.08
+            self.foot_marker[leg_id].scale.y = 0.01
+            self.foot_marker[leg_id].scale.z = 0.01
+            self.foot_marker[leg_id].color.a = 0.5
+            self.foot_marker[leg_id].color.r = 1.0
+            self.foot_marker[leg_id].color.g = 0.0
+            self.foot_marker[leg_id].color.b = 0.0
+
+            self.foot_marker_pub[leg_id].publish(self.foot_marker[leg_id])
+
+        pub_foot_marker(0)
+        pub_foot_marker(1)
+        pub_foot_marker(2)
+        pub_foot_marker(3)
 
 if __name__ == '__main__':
     id = "gym_env:Quadruped-v0"
