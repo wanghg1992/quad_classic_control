@@ -305,17 +305,18 @@ class Controller:
         tor = np.matrix([.0, .0, .0] * 6).T
 
         # tau + J.T*f = M * ddq + nle
-        # x = tau(18)-force(12)
-        H = ca.DM.eye(18 + 12)
+        # x = tau(18)-force(12)-delta_ddq(6)
+        H = ca.DM.eye(18 + 12 +6)
         # for i in range(18):
         #     H[i, i] = 0
-        g = ca.DM.zeros(18 + 12)
+        g = ca.DM.zeros(18 + 12 +6)
 
         # A = ca.DM.eye(18)
-        A = ca.DM.zeros(34, 30)
+        A = ca.DM.zeros(34, 36)
         A[0:18, 0:18] = ca.DM.eye(18)
         A[0:18, 18:30] = JF.T
-        mu_c = 0.3
+        A[0:18, 30:36] = -M[:, 0:6]
+        mu_c = 3.3
         # friction cone constrain
         A[18:22, 18:21] = np.asmatrix([[1, 0, -mu_c], [-1, 0, -mu_c], [0, 1, -mu_c], [0, -1, -mu_c]])
         A[22:26, 21:24] = np.asmatrix([[1, 0, -mu_c], [-1, 0, -mu_c], [0, 1, -mu_c], [0, -1, -mu_c]])
@@ -329,10 +330,16 @@ class Controller:
 
         uba = ca.DM(lba)
         uba[18:34] = 0
-        ubx = ca.DM.zeros(30)
+        ubx = ca.DM.zeros(36)
         ubx[0:6] = 0.000001
-        ubx[6:18] = 20
-        ubx[18:30] = 200
+        ubx[6:18] = 200
+        for leg in range(4):
+            if plan.contact_phase[leg] > 0.00001:
+                ubx[18 + leg * 3 + 0: 18 + leg*3 + 3] = 200
+            else:
+                ubx[18 + leg * 3 + 0: 18 + leg * 3 + 3] = 0.01
+        # ubx[18:30] = 200
+        ubx[30:36] = 60
         lbx = ca.DM(-ubx)
         lbx[20:30:3] = 0
 
@@ -346,7 +353,10 @@ class Controller:
 
         tor[0:18, 0] = x_opt[0:18]
         f[0:12, 0] = x_opt[18:30]
-        # print('M * ddq + nle - J.T*f:', M * ddq + nle - JF.T * f)
+        delta_ddq = np.matrix([.0]*18).T
+        delta_ddq[0: 6, 0] = x_opt[30: 36]
+        # delta_ddq[0: 6] = x_opt[30: 36]
+        # print('M * ddq + nle - J.T*f:', M * (ddq + delta_ddq) + nle - JF.T * f)
         # print('ddq:', np.linalg.inv(M) * (tor + JF.T * f - nle))
 
         torque = tor[6:18]
