@@ -410,6 +410,7 @@ class RosPublish:
 
         # msg publish
         # publish path
+        self.path_buffer_length = 40
         self.rf_foot_path = nmsg.Path()
         self.lf_foot_path = nmsg.Path()
         self.rh_foot_path = nmsg.Path()
@@ -555,7 +556,17 @@ class RosPublish:
             pose.pose.orientation.y = quaternion[1]
             pose.pose.orientation.z = quaternion[2]
             pose.pose.orientation.w = quaternion[3]
-            self.foot_path[leg_id].poses.append(pose)
+            # self.foot_path[leg_id].poses.clear()
+            # self.foot_path[leg_id].poses.append(pose)
+            # set path buffer
+            if len(self.foot_path[leg_id].poses) < self.path_buffer_length:
+                self.foot_path[leg_id].poses.append(pose)
+            while len(self.foot_path[leg_id].poses) > self.path_buffer_length:
+                self.foot_path[leg_id].poses.pop()
+            if len(self.foot_path[leg_id].poses) == self.path_buffer_length:
+                for i in range(0, self.path_buffer_length-1):
+                    self.foot_path[leg_id].poses[i] = self.foot_path[leg_id].poses[i+1]
+                self.foot_path[leg_id].poses[self.path_buffer_length-1] = pose
 
             self.foot_path_pub[leg_id].publish(self.foot_path[leg_id])
 
