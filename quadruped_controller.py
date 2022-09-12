@@ -339,7 +339,7 @@ class Controller:
         pin_tor = np.matrix([.0, .0, .0] * 6).T
 
         # tau + J.T*f = M * ddq + nle
-        # x = tau(18)-force(12)-delta_ddq(6)
+        # x = tau(18)-force(12)-delta_ddx(6)
         H = ca.DM.eye(18 + 12 +6)
         # for i in range(18):
         #     H[i, i] = 0
@@ -349,7 +349,7 @@ class Controller:
         A = ca.DM.zeros(34, 36)
         A[0:18, 0:18] = ca.DM.eye(18)
         A[0:18, 18:30] = JF.T
-        A[0:18, 30:36] = -M[:, 0:6]
+        A[0:18, 30:36] = -M * J2_pre_dpinv
         mu_c = 3.3
         # friction cone constrain
         A[18:22, 18:21] = np.asmatrix([[1, 0, -mu_c], [-1, 0, -mu_c], [0, 1, -mu_c], [0, -1, -mu_c]])
@@ -373,9 +373,12 @@ class Controller:
             else:
                 ubx[18 + leg * 3 + 0: 18 + leg * 3 + 3] = 0.01
         # ubx[18:30] = 200
-        ubx[30:36] = 60
+        # ubx[30:33] = 50.5
+        # ubx[33:36] = 5.5
+        ubx[30:33] = 50.0
+        ubx[33:36] = 50.0
         lbx = ca.DM(-ubx)
-        lbx[20:30:3] = 0
+        lbx[20:30:3] = 0.
 
         qp = {'h': H.sparsity(), 'a': A.sparsity()}
         # opts = {'printLevel': 'none'}
@@ -387,17 +390,25 @@ class Controller:
 
         pin_tor[0:18, 0] = x_opt[0:18]
         f[0:12, 0] = x_opt[18:30]
-        delta_ddq = np.matrix([.0]*18).T
-        delta_ddq[0: 6, 0] = x_opt[30: 36]
+        delta_ddx = np.matrix([.0]*6).T
+        delta_ddx[0: 6, 0] = x_opt[30: 36]
         # delta_ddq[0: 6] = x_opt[30: 36]
-        # print('M * ddq + nle - J.T*f:', M * (ddq + delta_ddq) + nle - JF.T * f)
-        # print('ddq:', np.linalg.inv(M) * (tor + JF.T * f - nle))
+        # print('tor == M * ddq + nle - J.T*f:', M * (pin_ddq + J2_pre_dpinv * delta_ddx) + nle - JF.T * f)
+        # print('ddq:', np.linalg.inv(M) * (pin_tor + JF.T * f - nle))
+
+        pin.forwardKinematics(model, data, pin_q_, pin_dq_, pin_ddq + J2_pre_dpinv * delta_ddx)
+        a = pin.getFrameAcceleration(model, data, model.getFrameId('LFFoot_link'), pin.LOCAL_WORLD_ALIGNED)
+        # print("a LFFoot: ", a)
+        a = pin.getFrameAcceleration(model, data, model.getFrameId('LHFoot_link'), pin.LOCAL_WORLD_ALIGNED)
+        # print("a LHFoot: ", a)
+        a = pin.getFrameAcceleration(model, data, model.getFrameId('body_link'), pin.LOCAL_WORLD_ALIGNED)
+        # print("a body cmd: ", a)
 
         self.tor = self.pin_inter.from_pin(pin_tor, 6)
 
         pin.aba(model, data, pin_q_, pin_dq_, pin_tor + est.Jfoot.T * f)
         pin_ddq_ = self.pin_inter.from_pin(data.ddq, 6)
-        print('pin_ddq_:', pin_ddq_)
+        # print('pin_ddq_:', pin_ddq_)
 
         return self.tor
 
