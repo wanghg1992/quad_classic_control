@@ -206,25 +206,41 @@ class Planner:
         body_rot_des = R.from_matrix([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
         return [body_pos_des, body_rot_des]
 
-    def update_foot_target(self, est_data):
+    def update_foot_target(self, est):
         for leg in range(4):
             if self.contact_phase[leg] > 0.0001:        # contact phase
                 self.first_swing[leg] = True
                 # if self.first_contact[leg]:
-                self.pf[leg*3 + 0] = self.pf_hold[leg*3 + 0]
-                self.pf[leg*3 + 1] = self.pf_hold[leg*3 + 1]
-                self.pf[leg*3 + 2] = self.pf_hold[leg*3 + 2]
+                self.pf[leg*3 + 0] = est.pf_[leg*3 + 0]
+                self.pf[leg*3 + 1] = est.pf_[leg*3 + 1]
+                self.pf[leg*3 + 2] = est.pf_[leg*3 + 2]
 
-            elif self.swing_phase[leg] > 0.0001:        # swing_phase
+            elif self.swing_phase[leg] > 0.0001:        # swing phase
                 self.first_contact[leg] = True
                 if self.first_swing[leg]:
-                    self.pf_init = est_data.pf_
-                self.pf_hold[leg*3 + 0] = self.ph_body[leg*3 + 0]
-                self.pf_hold[leg*3 + 1] = self.ph_body[leg*3 + 1]
-                self.pf_hold[leg*3 + 2] = self.ph_body[leg*3 + 2]
+                    self.first_swing[leg] = False
+                    self.pf_init = est.pf_
+                # self.pf_hold[leg*3 + 0] = self.ph_body[leg*3 + 0]
+                # self.pf_hold[leg*3 + 1] = self.ph_body[leg*3 + 1]
+                # self.pf_hold[leg*3 + 2] = self.ph_body[leg*3 + 2]
+                # self.pf_hold[leg*3 + 0] = self.pf_init[leg*3 + 0]
+                # self.pf_hold[leg*3 + 1] = self.pf_init[leg*3 + 1]
+                # self.pf_hold[leg*3 + 2] = self.pf_init[leg*3 + 2]
+
+                yaw = transformations.euler_from_quaternion(est.pb_[3:7])[2]
+                rot_b2w = np.matrix([[math.cos(-yaw),-math.sin(-yaw)],
+                                     [math.sin(-yaw),math.cos(-yaw)]])
+                Kp = np.diag([-0.03, -0.03])
+                self.pf_hold[leg * 3 + 0 : leg * 3 + 2] = \
+                    np.asarray( \
+                    np.asmatrix(est.pb_[0 : 2] + est.vb_[0 : 2] * self.step_period / 2.0).T \
+                    + rot_b2w * Kp *rot_b2w.T * np.asmatrix(plan.vb[0 : 2] - est.vb_[0 : 2]).T \
+                    + rot_b2w * np.asmatrix(self.ph_body[leg * 3 + 0 : leg * 3 + 2]).T \
+                        )[:, 0]
+                self.pf_hold[leg * 3 + 2] = self.pf_init[leg * 3 + 2]
                 self.pf[leg*3 + 0] = self.pf_init[leg*3 + 0] + (self.pf_hold[leg*3 + 0] - self.pf_init[leg*3 + 0])*self.swing_phase[leg]
-                self.pf[leg*3 + 1] = self.pf_init[leg*3 + 0] + (self.pf_hold[leg*3 + 0] - self.pf_init[leg*3 + 0])*self.swing_phase[leg]
-                self.pf[leg*3 + 2] = self.pf_init[leg*3 + 0] + (math.cos((self.swing_phase[leg]-0.5)*3.14/2)+1)/2*0.06
+                self.pf[leg*3 + 1] = self.pf_init[leg*3 + 1] + (self.pf_hold[leg*3 + 1] - self.pf_init[leg*3 + 1])*self.swing_phase[leg]
+                self.pf[leg*3 + 2] = self.pf_init[leg*3 + 2] + (math.cos((self.swing_phase[leg]-0.5)*3.14*2)+1)/2*0.03
 
     def phase_abnormal_handle(self):
         if 0 == [[e > 1.0 for e in self.contact_phase] + [e > 1.0 for e in self.swing_phase]].count(True):
