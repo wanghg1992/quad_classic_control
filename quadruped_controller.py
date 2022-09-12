@@ -147,7 +147,7 @@ class Planner:
     def __init__(self, model):
         self.timer = .0
         self.dt = 0.001
-        self.iterPerPlan = 10
+        self.iterPerPlan = 5
         self.dtPlan = self.iterPerPlan * self.dt
         self.horizon = 200
         self.gait = 'trot'
@@ -157,6 +157,7 @@ class Planner:
         self.contact_state = np.asarray([0, 0, 0, 0])
         self.swing_phase = np.asarray([.0, .0, .0, .0])
         self.contact_phase = np.asarray([.0, .0, .0, .0])
+        self.step_period = .0
         self.first_swing = np.asarray([True, True, True, True])
         self.first_contact = np.asarray([True, True, True, True])
         self.phase_abnormal = False
@@ -174,6 +175,7 @@ class Planner:
             self.segments = np.asarray([20, 20, 20, 20])
             self.duration = np.asarray([10, 10, 10, 10])
             self.offset = np.asarray([0, 10, 10, 0])
+            self.step_period = self.segments[0] * self.dtPlan
         # iter = time / self.dt
         iterPlan = time / self.dtPlan
         for leg in range(4):
@@ -186,6 +188,7 @@ class Planner:
             self.segments = np.asarray([20, 20, 20, 20])
             self.duration = np.asarray([10, 10, 10, 10])
             self.offset = np.asarray([0, 10, 10, 0])
+            self.step_period = self.segments[0] * self.dtPlan
         iter = time / self.dt
         # iterPlan = time / self.dtPlan
         for leg in range(4):
@@ -313,12 +316,16 @@ class Controller:
         self.body_rot_des = R.from_quat(plan.pb[3:7])
         self.body_pos_fdb = est.pb_[0:3]
         self.body_rot_fdb = R.from_quat(est.pb_[3:7])
+        self.body_vel_des = plan.vb
+        self.body_vel_fdb = est.vb_
 
-        self.body_acc_des[0:3, 0] = np.asmatrix(80 * (self.body_pos_des - self.body_pos_fdb)).T
-        self.body_acc_des[3:6, 0] = np.asmatrix(300 * (self.body_rot_des * self.body_rot_fdb.inv()).as_rotvec()).T
+        self.body_acc_des[0:3, 0] = np.asmatrix(200. * (self.body_pos_des - self.body_pos_fdb)
+                                                + 20. * (self.body_vel_des[0:3] - self.body_vel_fdb[0:3])).T
+        self.body_acc_des[3:6, 0] = np.asmatrix(200. * (self.body_rot_des * self.body_rot_fdb.inv()).as_rotvec()
+                                                + 20. * (self.body_vel_des[3:6] - self.body_vel_fdb[3:6])).T
 
-        self.body_acc_des = self.body_acc_des - 8 * np.asmatrix(est.vb_).T
-        self.foot_acc_des = np.asmatrix(200*(plan.pf - est.pf_)).T
+        # self.body_acc_des = self.body_acc_des - 8 * np.asmatrix(est.vb_).T
+        self.foot_acc_des = np.asmatrix(500.*(plan.pf - est.pf_)).T - 5. * est.vf_
 
         # WBC task 1: contact foot not slip
         pin.crba(model, data, pin_q_)
@@ -357,6 +364,12 @@ class Controller:
         # tau + J.T*f = M * ddq + nle
         # x = tau(18)-force(12)-delta_ddx(6)
         H = ca.DM.eye(18 + 12 +6)
+        # H = ca.DM.zeros(18 + 12 +6)
+        for diag in range(0, 30):
+            H[diag, diag] = 0.00001
+        for diag in range(30, 36):
+            H[diag, diag] = 10
+        H[31, 31] = 1
         # for i in range(18):
         #     H[i, i] = 0
         g = ca.DM.zeros(18 + 12 +6)
@@ -366,28 +379,30 @@ class Controller:
         A[0:18, 0:18] = ca.DM.eye(18)
         A[0:18, 18:30] = JF.T
         A[0:18, 30:36] = -M * J2_pre_dpinv
-        mu_c = 3.3
+        mu_c = 0.3
         # friction cone constrain
-        A[18:22, 18:21] = np.asmatrix([[1, 0, -mu_c], [-1, 0, -mu_c], [0, 1, -mu_c], [0, -1, -mu_c]])
-        A[22:26, 21:24] = np.asmatrix([[1, 0, -mu_c], [-1, 0, -mu_c], [0, 1, -mu_c], [0, -1, -mu_c]])
-        A[26:30, 24:27] = np.asmatrix([[1, 0, -mu_c], [-1, 0, -mu_c], [0, 1, -mu_c], [0, -1, -mu_c]])
-        A[30:34, 27:30] = np.asmatrix([[1, 0, -mu_c], [-1, 0, -mu_c], [0, 1, -mu_c], [0, -1, -mu_c]])
+        for leg in range(4):
+            if plan.contact_phase[leg] > 0.00001:
+                A[leg*4+18:leg*4+22, leg*3+18:leg*3+21] = np.asmatrix([[1., 0., -mu_c], [-1., 0., -mu_c], [0., 1., -mu_c], [0., -1., -mu_c]])
+            else:
+                A[leg*4+18:leg*4+22, leg*3+18:leg*3+21] = np.asmatrix([[0., 0., 0.], [0., 0., 0.], [0., 0., 0.], [0., 0., 0.]])
         # A[0:18, 18:30] = JF.T.zeros()
         # A[0:18, 18:30] = ca.DM.zeros(18, 12)
         lba = ca.DM.zeros(34)
         lba[0:18] = M * pin_ddq + nle
-        lba[18:34] = -1000
+        # lba[0:18] = M * (pin_ddq + J2_pre_dpinv * (ddx - Jd2 * pin_dq_ - J2 * pin_ddq)) + nle
+        lba[18:34] = -1000000.0
 
         uba = ca.DM(lba)
         uba[18:34] = 0
         ubx = ca.DM.zeros(36)
-        ubx[0:6] = 0.000001
+        ubx[0:6] = 0.0001
         ubx[6:18] = 200.
         for leg in range(4):
             if plan.contact_phase[leg] > 0.00001:
-                ubx[18 + leg * 3 + 0: 18 + leg*3 + 3] = 200
+                ubx[18 + leg * 3 + 0: 18 + leg * 3 + 3] = 200.
             else:
-                ubx[18 + leg * 3 + 0: 18 + leg * 3 + 3] = 0.01
+                ubx[18 + leg * 3 + 0: 18 + leg * 3 + 3] = 0.001
         # ubx[18:30] = 200
         # ubx[30:33] = 50.5
         # ubx[33:36] = 5.5
