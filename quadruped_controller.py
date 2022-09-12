@@ -24,6 +24,16 @@ from tf.transformations import quaternion_from_euler
 from nav_msgs import msg as nmsg
 from visualization_msgs import msg as vmsg
 
+class PinInter:
+    # leg order: LF-LH-RF-RH
+    # def __init__(self):
+    def to_pin(self, input, offset):
+        return np.concatenate([input[0: offset], input[offset + 3: offset + 6], input[offset + 9: offset + 12],
+                input[offset + 0: offset + 3], input[offset + 6: offset + 9]])
+    def from_pin(self, input, offset):
+        return np.concatenate([input[0: offset], input[offset + 6: offset + 9], input[offset + 0: offset + 3], input[offset + 9: offset + 12],
+                input[offset + 3: offset + 6]])
+
 class Estimation:
     def __init__(self, model):
         self.q_ = np.asarray([0.] * 19)
@@ -51,13 +61,18 @@ class Estimation:
         self.Jdlh = np.asmatrix(np.zeros([6, 18]))
         self.Jdfoot = np.asmatrix(np.zeros([12, 18]))
 
+        self.pin_inter = PinInter()
+
     def step(self):
         model = self.model
         data = self.data
         q_ = self.q_
         dq_ = self.dq_
 
-        pin.forwardKinematics(model, data, q_, dq_)
+        pin_q_ = self.pin_inter.to_pin(self.q_, 7)
+        pin_dq_ = self.pin_inter.to_pin(self.dq_, 6)
+
+        pin.forwardKinematics(model, data, pin_q_, pin_dq_)
         pin.updateFramePlacements(model, data)
         # for frame, oMf in zip(model.frames, data.oMf):
         #     print(("{:<24} : {: .2f} {: .2f} {: .2f}"
@@ -81,7 +96,9 @@ class Estimation:
         self.vf_ = np.append(self.vf_, vf_rh_[0:3, :], axis=0)
         self.vf_ = np.append(self.vf_, vf_lh_[0:3, :], axis=0)
 
-        pin.computeJointJacobians(model, data, q_)
+        self.getBaseVelocityLocal()
+
+        pin.computeJointJacobians(model, data, pin_q_)
         self.JB = np.matrix(
             pin.getFrameJacobian(model, data, model.getFrameId('root_joint'), pin.ReferenceFrame.LOCAL_WORLD_ALIGNED))
         self.Jrf = np.matrix(
@@ -96,7 +113,7 @@ class Estimation:
         self.Jfoot = np.append(self.Jfoot, self.Jrh[0:3, :], axis=0)
         self.Jfoot = np.append(self.Jfoot, self.Jlh[0:3, :], axis=0)
 
-        pin.computeJointJacobiansTimeVariation(model, data, q_, dq_)
+        pin.computeJointJacobiansTimeVariation(model, data, pin_q_, pin_dq_)
         self.JdB = np.matrix(pin.getFrameJacobianTimeVariation(model, data, model.getFrameId('root_joint'),
                                                           pin.ReferenceFrame.LOCAL_WORLD_ALIGNED))
         self.Jdrf = np.matrix(pin.getFrameJacobianTimeVariation(model, data, model.getFrameId('RF4_joint'),
@@ -111,6 +128,19 @@ class Estimation:
         self.Jdfoot = np.append(self.Jdfoot, self.Jdrh[0:3, :], axis=0)
         self.Jdfoot = np.append(self.Jdfoot, self.Jdlh[0:3, :], axis=0)
         return [self.pb_, self.Jfoot, self.Jdfoot]
+
+    def getBaseVelocityLocal(self):
+        yaw = transformations.euler_from_quaternion(self.pb_[3:7])[2]
+        r = R.from_euler('xyz', [0., 0., yaw])
+        r = np.asmatrix(r.as_matrix())
+
+        linearVelocity = np.asarray(self.vb_[0:3]).reshape(3,1)
+        angularVelocity = np.asarray(self.vb_[3:6]).reshape(3,1)
+
+        self.vb_body_ = [(r * linearVelocity).reshape(1, 3).tolist()[0],
+                (r * angularVelocity).reshape(1, 3).tolist()[0]]
+
+        return self.vb_body_
 
 class Planner:
     def __init__(self, model):
@@ -221,13 +251,14 @@ class Controller:
         self.body_rot_fdb = R.from_matrix([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
         self.model = model
         self.data = self.model.createData()
+        self.pin_inter = PinInter()
 
     def step_high_slope(self, p, o):
         kp = np.asarray([100.] * 6)
         ddp = np.asarray([0.] * 6)
         ddp[0:3] = np.multiply(kp[0:3], o[0] - p[0:3])
 
-        return self.torque
+        return self.tor
 
     def classical_control(self, observation):
         baseLinearVelocityLocal = observation[6:9]
@@ -252,8 +283,8 @@ class Controller:
         return action
 
     def optimal_control(self, est, plan):
-        q_ = est.q_
-        dq_ = est.dq_
+        pin_q_ = self.pin_inter.to_pin(est.q_, 7)
+        pin_dq_ = self.pin_inter.to_pin(est.dq_, 6)
         JB = est.JB
         Jfoot = est.Jfoot
         JdB = est.JdB
@@ -273,13 +304,13 @@ class Controller:
         self.foot_acc_des = np.asmatrix(200*(plan.pf - est.pf_)).T
 
         # WBC task 1: contact foot not slip
-        pin.crba(model, data, q_)
+        pin.crba(model, data, pin_q_)
         M = np.asmatrix(data.M)
         # ddx = np.zeros(12).reshape(12, 1)
         ddx = self.foot_acc_des
         JF = Jfoot
         JF_pinv = np.linalg.inv(M) * JF.T * np.linalg.inv(JF * np.linalg.inv(M) * JF.T)
-        ddq = JF_pinv * (ddx - Jdfoot * dq_)
+        pin_ddq = JF_pinv * (ddx - Jdfoot * pin_dq_)
         N1 = np.eye(18) - JF_pinv * JF
 
         # WBC task 2: body control
@@ -290,10 +321,10 @@ class Controller:
         J2_pre = J2 * N1
         J2_pre_dpinv = np.linalg.inv(M) * J2_pre.T * np.linalg.inv(J2_pre * np.linalg.inv(M) * J2_pre.T)
         ddx = self.body_acc_des
-        ddq = ddq + J2_pre_dpinv * (ddx - Jd2 * dq_ - J2 * ddq)
+        pin_ddq = pin_ddq + J2_pre_dpinv * (ddx - Jd2 * pin_dq_ - J2 * pin_ddq)
 
         # floating base dynamics
-        pin.forwardKinematics(model, data, q_, dq_, ddq)
+        pin.forwardKinematics(model, data, pin_q_, pin_dq_, pin_ddq)
         a = pin.getFrameAcceleration(model, data, model.getFrameId('LFFoot_link'), pin.LOCAL_WORLD_ALIGNED)
         # a = pin.getFrameAcceleration(model, data,model.getFrameId('LFFoot_link'), pin.LOCAL)
         # print("a LFFoot: ", a)
@@ -301,10 +332,10 @@ class Controller:
         # a = pin.getFrameAcceleration(model, data,model.getFrameId('body_link'), pin.LOCAL)
         # print("a body: ", a)
 
-        M = pin.crba(model, data, q_)
-        nle = np.matrix(pin.nle(model, data, q_, dq_)).T
+        M = pin.crba(model, data, pin_q_)
+        nle = np.matrix(pin.nle(model, data, pin_q_, pin_dq_)).T
         f = np.matrix([.0, .0, .0] * 4).T
-        tor = np.matrix([.0, .0, .0] * 6).T
+        pin_tor = np.matrix([.0, .0, .0] * 6).T
 
         # tau + J.T*f = M * ddq + nle
         # x = tau(18)-force(12)-delta_ddq(6)
@@ -327,7 +358,7 @@ class Controller:
         # A[0:18, 18:30] = JF.T.zeros()
         # A[0:18, 18:30] = ca.DM.zeros(18, 12)
         lba = ca.DM.zeros(34)
-        lba[0:18] = M * ddq + nle
+        lba[0:18] = M * pin_ddq + nle
         lba[18:34] = -1000
 
         uba = ca.DM(lba)
@@ -353,7 +384,7 @@ class Controller:
         x_opt = r['x']
         # print('x_opt:', x_opt)
 
-        tor[0:18, 0] = x_opt[0:18]
+        pin_tor[0:18, 0] = x_opt[0:18]
         f[0:12, 0] = x_opt[18:30]
         delta_ddq = np.matrix([.0]*18).T
         delta_ddq[0: 6, 0] = x_opt[30: 36]
@@ -361,13 +392,13 @@ class Controller:
         # print('M * ddq + nle - J.T*f:', M * (ddq + delta_ddq) + nle - JF.T * f)
         # print('ddq:', np.linalg.inv(M) * (tor + JF.T * f - nle))
 
-        torque = tor[6:18]
+        self.tor = self.pin_inter.from_pin(pin_tor, 6)
 
-        pin.aba(model, data, q_, dq_, tor)
-        a_f = data.ddq
-        # print('a_f:', a_f)
+        pin.aba(model, data, pin_q_, pin_dq_, pin_tor + est.Jfoot.T * f)
+        pin_ddq_ = self.pin_inter.from_pin(data.ddq, 6)
+        print('pin_ddq_:', pin_ddq_)
 
-        return torque
+        return self.tor
 
     def step(self, est, plan):
         return self.optimal_control(est, plan)
@@ -466,25 +497,26 @@ class RosPublish:
                 br = tf2_ros.TransformBroadcaster()
                 br.sendTransform(st)
 
-            pub_tf_single_link('body_link', 'LF1_link', [0.0915,  0.08, 0], 'x', est.q_[7 + 0])
-            pub_tf_single_link('LF1_link', 'LF2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 1])
-            pub_tf_single_link('LF2_link', 'LF3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 2])
-            pub_tf_single_link('LF3_link', 'LFFoot_link', [0.0, 0.0, -0.065], 'x', 0)
-
-            pub_tf_single_link('body_link', 'LH1_link', [-0.0915, 0.08, 0], 'x', est.q_[7 + 3])
-            pub_tf_single_link('LH1_link', 'LH2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 4])
-            pub_tf_single_link('LH2_link', 'LH3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 5])
-            pub_tf_single_link('LH3_link', 'LHFoot_link', [0.0, 0.0, -0.065], 'x', 0)
-
-            pub_tf_single_link('body_link', 'RF1_link', [0.0915, -0.08, 0], 'x', est.q_[7 + 6])
-            pub_tf_single_link('RF1_link', 'RF2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 7])
-            pub_tf_single_link('RF2_link', 'RF3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 8])
+            pub_tf_single_link('body_link', 'RF1_link', [0.0915, -0.08, 0], 'x', est.q_[7 + 0])
+            pub_tf_single_link('RF1_link', 'RF2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 1])
+            pub_tf_single_link('RF2_link', 'RF3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 2])
             pub_tf_single_link('RF3_link', 'RFFoot_link', [0.0, 0.0, -0.065], 'x', 0)
 
-            pub_tf_single_link('body_link', 'RH1_link', [-0.0915, -0.08, 0], 'x', est.q_[7 + 9])
-            pub_tf_single_link('RH1_link', 'RH2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 10])
-            pub_tf_single_link('RH2_link', 'RH3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 11])
+            pub_tf_single_link('body_link', 'LF1_link', [0.0915,  0.08, 0], 'x', est.q_[7 + 3])
+            pub_tf_single_link('LF1_link', 'LF2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 4])
+            pub_tf_single_link('LF2_link', 'LF3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 5])
+            pub_tf_single_link('LF3_link', 'LFFoot_link', [0.0, 0.0, -0.065], 'x', 0)
+
+            pub_tf_single_link('body_link', 'RH1_link', [-0.0915, -0.08, 0], 'x', est.q_[7 + 6])
+            pub_tf_single_link('RH1_link', 'RH2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 7])
+            pub_tf_single_link('RH2_link', 'RH3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 8])
             pub_tf_single_link('RH3_link', 'RHFoot_link', [0.0, 0.0, -0.065], 'x', 0)
+
+            pub_tf_single_link('body_link', 'LH1_link', [-0.0915, 0.08, 0], 'x', est.q_[7 + 9])
+            pub_tf_single_link('LH1_link', 'LH2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 10])
+            pub_tf_single_link('LH2_link', 'LH3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 11])
+            pub_tf_single_link('LH3_link', 'LHFoot_link', [0.0, 0.0, -0.065], 'x', 0)
+
 
         pub_tf_body_link()
         pub_tf_leg_link()
@@ -617,18 +649,25 @@ if __name__ == '__main__':
     for i in range(100000):
 
         # simulation
-        # leg order: LF-LH-RF-RH
-        torque = list(torque[0:3])+ list(torque[6:9])+ list(torque[3:6])+ list(torque[9:12])
+        # leg order: LF-RF-LH-RH
+        torque = list(control.tor[6 + 3:6 + 6]) + list(control.tor[6 + 0:6 + 3]) + list(control.tor[6 + 9:6 + 12]) \
+                 + list(control.tor[6 + 6:6 + 9])
         [o_, pb_, vb_, js_] = env.step_torque(torque)
-        js_ = list(js_[0:3]) + list(js_[6:9]) + list(js_[3:6]) + list(js_[9:12])
+        # js_ = list(js_[0:3]) + list(js_[6:9]) + list(js_[3:6]) + list(js_[9:12])
+        js_ = list(js_[3:6]) + list(js_[0:3]) + list(js_[9:12]) + list(js_[6:9])
+
 
         pj_ = [i[0] for i in js_]
         vj_ = [i[1] for i in js_]
+        tj_ = [i[3] for i in js_]
         q_ = np.asmatrix(list(pb_[0] + pb_[1]) + pj_).T
         dq_ = np.asmatrix(list(vb_[0] + vb_[1]) + vj_).T
+        tor_ = np.asmatrix([.0]*6 + tj_).T
+
 
         est.q_ = q_
         est.dq_ = dq_
+        est.tor_ = tor_
         est.pb_[0:3] = pb_[0]
         est.pb_[3:7] = pb_[1]
         est.vb_[0:3] = vb_[0]
