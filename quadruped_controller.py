@@ -26,12 +26,14 @@ from visualization_msgs import msg as vmsg
 
 class Estimation:
     def __init__(self, model):
-        self.q_ = np.asarray([0] * 19)
-        self.dq_ = np.asarray([0] * 18)
+        self.q_ = np.asarray([0.] * 19)
+        self.dq_ = np.asarray([0.] * 18)
+        self.tor_ = np.asarray([0.] * 18)
         self.pb_ = np.asarray([0, 0, 0.16, 0., 0., 0., 1.])
         self.pf_ = np.asarray([0.] * 12)
         self.vb_ = np.asarray([0.] * 6)
         self.vf_ = np.asarray([0.] * 12)
+        self.vb_body_ = np.asarray([0.] * 6)
         self.model = model
         self.data = self.model.createData()
 
@@ -130,7 +132,7 @@ class Planner:
         self.pf_init = np.asarray([.0] * 12)
         self.pf_hold = np.asarray([.0] * 12)
         self.pf = np.asarray([.0] * 12)
-        self.ph_body = np.asarray([0.1, -0.05, .0,   0.1, 0.05, .0,   -0.1, -0.05, .0,   -0.1, 0.05, .0])
+        self.ph_body = np.asarray([0.0915, -0.08, .0,   0.0915, 0.08, .0,   -0.0915, -0.08, .0,   -0.0915, 0.08, .0])
         self.pb = np.asarray([.0, .0, 0.16, 0., 0., 0., 1.])
         self.vb = np.asarray([.0] * 6)
         self.model = model
@@ -169,8 +171,8 @@ class Planner:
         self.get_step_phase(self.timer)
 
     def update_body_target(self):
-        body_pos_des = np.asmatrix([0, 0, 0.16])
-        body_rot_des = R.from_matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        body_pos_des = np.asmatrix([0., 0., 0.16])
+        body_rot_des = R.from_matrix([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
         return [body_pos_des, body_rot_des]
 
     def update_foot_target(self, est_data):
@@ -211,18 +213,18 @@ class Planner:
 
 class Controller:
     def __init__(self, model):
-        self.torque = np.asarray([0] * 12)
-        self.body_pos_des = np.asmatrix([0, 0, 0.16])
-        self.body_rot_des = R.from_matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-        self.body_acc_des = np.asmatrix([0] * 6).T
+        self.tor = np.asarray([.0] * 18)
+        self.body_pos_des = np.asmatrix([.0, .0, 0.16])
+        self.body_rot_des = R.from_matrix([[1., .0, .0], [.0, 1., .0], [0., 0., 1.]])
+        self.body_acc_des = np.asmatrix([0.] * 6).T
         self.body_pos_fdb = np.asmatrix(env.reset()[0:3])
-        self.body_rot_fdb = R.from_matrix([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+        self.body_rot_fdb = R.from_matrix([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
         self.model = model
         self.data = self.model.createData()
 
     def step_high_slope(self, p, o):
-        kp = np.asarray([100] * 6)
-        ddp = np.asarray([0] * 6)
+        kp = np.asarray([100.] * 6)
+        ddp = np.asarray([0.] * 6)
         ddp[0:3] = np.multiply(kp[0:3], o[0] - p[0:3])
 
         return self.torque
@@ -234,9 +236,9 @@ class Controller:
         step_phase = observation[12:16]
         contact = observation[16:20]
         footHold = np.asarray(baseLinearVelocityLocal[0:2]) * 1.0 / self.step_freq * (0.5 + 0.05)
-        action = [0] * 12
-        kp = [20, -20, 0]
-        kd = [2, -2, 0]
+        action = [0.] * 12
+        kp = [20., -20., 0.]
+        kd = [2., -2., 0.]
         for leg in range(4):
             if contact[leg] == 1:
                 action[leg * 3 + 0] = kp[1] * (observation[4]) + kd[1] * (observation[10]) * 1
@@ -332,7 +334,7 @@ class Controller:
         uba[18:34] = 0
         ubx = ca.DM.zeros(36)
         ubx[0:6] = 0.000001
-        ubx[6:18] = 200
+        ubx[6:18] = 200.
         for leg in range(4):
             if plan.contact_phase[leg] > 0.00001:
                 ubx[18 + leg * 3 + 0: 18 + leg*3 + 3] = 200
