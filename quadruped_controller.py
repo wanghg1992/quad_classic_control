@@ -15,6 +15,7 @@ from scipy.spatial.transform import Rotation as R
 
 import math
 
+from sensor_msgs import msg as smsg
 from geometry_msgs import msg as gmsg
 from geometry_msgs.msg import Transform
 import tf2_ros
@@ -448,17 +449,29 @@ class RosPublish:
                                rospy.Publisher('rh_foot_marker', vmsg.Marker, queue_size=10),
                                rospy.Publisher('lh_foot_marker', vmsg.Marker, queue_size=10)]
 
-
+        # publish joint state
+        self.joint_state = smsg.JointState()
+        self.joint_state_pub = rospy.Publisher('joint_state', smsg.JointState, queue_size=10)
+        self.joint_name = ['RF1_joint', 'RF2_joint', 'RF3_joint',
+                           'LF1_joint', 'LF2_joint', 'LF3_joint',
+                           'RH1_joint', 'RH2_joint', 'RH3_joint',
+                           'LH1_joint', 'LH2_joint', 'LH3_joint']
+        for joint in range(12):
+            self.joint_state.name.append(self.joint_name[joint])
+            self.joint_state.position.append(.0)
+            self.joint_state.velocity.append(.0)
+            self.joint_state.effort.append(.0)
 
         rospy.init_node('talker', anonymous=True)
 
-    def step(self, est, plan):
+    def step(self, est, plan, control):
         self.pub_tf(est, plan)
         self.pub_path(est, plan)
         self.pub_point(est, plan)
         # self.pub_pose(est, plan)
         # self.pub_wrench(est, plan)
         self.pub_marker(est, plan)
+        self.pub_state(est, plan, control)
 
     def pub_tf(self, est, plan):
 
@@ -630,6 +643,17 @@ class RosPublish:
         pub_foot_marker(2)
         pub_foot_marker(3)
 
+    def pub_state(self, est, plan, control):
+        def pub_joint_state():
+            self.joint_state.header.frame_id = 'world'
+            self.joint_state.header.stamp = rospy.Time.now()
+            for joint in range(12):
+                # self.joint_state.effort[joint] = est.tor_[joint]
+                self.joint_state.effort[joint] = control.tor[6 + joint]
+            self.joint_state_pub.publish(self.joint_state)
+
+        pub_joint_state()
+
 if __name__ == '__main__':
     id = "gym_env:Quadruped-v0"
     env = gym.make(id)
@@ -678,7 +702,7 @@ if __name__ == '__main__':
 
         torque = control.step(est, plan)
 
-        rospub.step(est, plan)
+        rospub.step(est, plan, control)
 
         # env.render()
     input("press any key to continue...")
