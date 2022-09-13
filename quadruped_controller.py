@@ -25,7 +25,7 @@ from tf.transformations import quaternion_from_euler
 from nav_msgs import msg as nmsg
 from visualization_msgs import msg as vmsg
 
-class PinInter:
+class Utility:
     # leg order: LF-LH-RF-RH
     # def __init__(self):
     def to_pin(self, input, offset):
@@ -35,43 +35,44 @@ class PinInter:
         return np.concatenate([input[0: offset], input[offset + 6: offset + 9], input[offset + 0: offset + 3], input[offset + 9: offset + 12],
                 input[offset + 3: offset + 6]])
 
+    def m2l(self, input):
+        return np.array(input)[:, 0].tolist()
+
 class Estimation:
     def __init__(self, model):
-        self.q_ = np.asarray([0.] * 19)
-        self.dq_ = np.asarray([0.] * 18)
-        self.tor_ = np.asarray([0.] * 18)
-        self.pb_ = np.asarray([0, 0, 0.16, 0., 0., 0., 1.])
-        self.pf_ = np.asarray([0.] * 12)
-        self.vb_ = np.asarray([0.] * 6)
-        self.vf_ = np.asarray([0.] * 12)
-        self.vb_body_ = np.asarray([0.] * 6)
+        self.q_ = np.matrix([0.] * 19).T
+        self.dq_ = np.matrix([0.] * 18).T
+        self.tor_ = np.matrix([0.] * 18).T
+        self.pb_ = np.matrix([0, 0, 0.16, 0., 0., 0., 1.]).T
+        self.pf_ = np.matrix([0.] * 12).T
+        self.vb_ = np.matrix([0.] * 6).T
+        self.vf_ = np.matrix([0.] * 12).T
+        self.vb_body_ = np.matrix([0.] * 6).T
         self.model = model
         self.data = self.model.createData()
 
-        self.JB = np.asmatrix(np.zeros([6, 18]))
-        self.Jrf = np.asmatrix(np.zeros([6, 18]))
-        self.Jlf = np.asmatrix(np.zeros([6, 18]))
-        self.Jrh = np.asmatrix(np.zeros([6, 18]))
-        self.Jlh = np.asmatrix(np.zeros([6, 18]))
-        self.Jfoot = np.asmatrix(np.zeros([12, 18]))
+        self.JB = np.matrix(np.zeros([6, 18]))
+        self.Jrf = np.matrix(np.zeros([6, 18]))
+        self.Jlf = np.matrix(np.zeros([6, 18]))
+        self.Jrh = np.matrix(np.zeros([6, 18]))
+        self.Jlh = np.matrix(np.zeros([6, 18]))
+        self.Jfoot = np.matrix(np.zeros([12, 18]))
 
-        self.JdB = np.asmatrix(np.zeros([6, 18]))
-        self.Jdrf = np.asmatrix(np.zeros([6, 18]))
-        self.Jdlf = np.asmatrix(np.zeros([6, 18]))
-        self.Jdrh = np.asmatrix(np.zeros([6, 18]))
-        self.Jdlh = np.asmatrix(np.zeros([6, 18]))
-        self.Jdfoot = np.asmatrix(np.zeros([12, 18]))
+        self.JdB = np.matrix(np.zeros([6, 18]))
+        self.Jdrf = np.matrix(np.zeros([6, 18]))
+        self.Jdlf = np.matrix(np.zeros([6, 18]))
+        self.Jdrh = np.matrix(np.zeros([6, 18]))
+        self.Jdlh = np.matrix(np.zeros([6, 18]))
+        self.Jdfoot = np.matrix(np.zeros([12, 18]))
 
-        self.pin_inter = PinInter()
+        self.ut = Utility()
 
     def step(self):
         model = self.model
         data = self.data
-        q_ = self.q_
-        dq_ = self.dq_
 
-        pin_q_ = self.pin_inter.to_pin(self.q_, 7)
-        pin_dq_ = self.pin_inter.to_pin(self.dq_, 6)
+        pin_q_ = self.ut.to_pin(self.q_, 7)
+        pin_dq_ = self.ut.to_pin(self.dq_, 6)
 
         pin.forwardKinematics(model, data, pin_q_, pin_dq_)
         pin.updateFramePlacements(model, data)
@@ -85,6 +86,7 @@ class Estimation:
         self.pf_ = np.append(pf_rf_, pf_lf_, axis=0)
         self.pf_ = np.append(self.pf_, pf_rh_, axis=0)
         self.pf_ = np.append(self.pf_, pf_lh_, axis=0)
+        self.pf_ = np.matrix(self.pf_).T
         vf_rf_ = np.matrix(
             pin.getFrameVelocity(model, data, model.getFrameId('RF4_joint'), pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)).T
         vf_lf_ = np.matrix(
@@ -131,12 +133,12 @@ class Estimation:
         return [self.pb_, self.Jfoot, self.Jdfoot]
 
     def getBaseVelocityLocal(self):
-        yaw = transformations.euler_from_quaternion(self.pb_[3:7])[2]
+        yaw = transformations.euler_from_quaternion(self.ut.m2l(self.pb_[3:7]))[2]
         r = R.from_euler('xyz', [0., 0., yaw])
-        r = np.asmatrix(r.as_matrix())
+        r = np.matrix(r.as_matrix())
 
-        linearVelocity = np.asarray(self.vb_[0:3]).reshape(3,1)
-        angularVelocity = np.asarray(self.vb_[3:6]).reshape(3,1)
+        linearVelocity = np.array(self.vb_[0:3]).reshape(3,1)
+        angularVelocity = np.array(self.vb_[3:6]).reshape(3,1)
 
         self.vb_body_ = [(r * linearVelocity).reshape(1, 3).tolist()[0],
                 (r * angularVelocity).reshape(1, 3).tolist()[0]]
@@ -151,30 +153,34 @@ class Planner:
         self.dtPlan = self.iterPerPlan * self.dt
         self.horizon = 200
         self.gait = 'trot'
-        self.segments = np.asarray([0, 0, 0, 0])
-        self.duration = np.asarray([0, 0, 0, 0])
-        self.offset = np.asarray([0, 0, 0, 0])
-        self.contact_state = np.asarray([0, 0, 0, 0])
-        self.swing_phase = np.asarray([.0, .0, .0, .0])
-        self.contact_phase = np.asarray([.0, .0, .0, .0])
+        self.segments = np.array([0, 0, 0, 0])
+        self.duration = np.array([0, 0, 0, 0])
+        self.offset = np.array([0, 0, 0, 0])
+        self.contact_state = np.array([0, 0, 0, 0])
+        self.swing_phase = np.array([.0, .0, .0, .0])
+        self.contact_phase = np.array([.0, .0, .0, .0])
         self.step_period = .0
-        self.first_swing = np.asarray([True, True, True, True])
-        self.first_contact = np.asarray([True, True, True, True])
+        self.first_swing = np.array([True, True, True, True])
+        self.first_contact = np.array([True, True, True, True])
         self.phase_abnormal = False
-        self.pf_init = np.asarray([.0] * 12)
-        self.pf_hold = np.asarray([.0] * 12)
-        self.pf = np.asarray([.0] * 12)
-        self.ph_body = np.asarray([0.0915, -0.08, .0,   0.0915, 0.08, .0,   -0.0915, -0.08, .0,   -0.0915, 0.08, .0])
-        self.pb = np.asarray([.0, .0, 0.16, 0., 0., 0., 1.])
-        self.vb = np.asarray([.0] * 6)
+        self.pf_init = np.matrix([.0] * 12).T
+        self.pf_hold = np.matrix([.0] * 12).T
+        self.pf = np.matrix([.0] * 12).T
+        self.vf = np.matrix([.0] * 12).T
+        self.af = np.matrix([.0] * 12).T
+        self.ph_body = np.matrix([0.0915, -0.08, .0,   0.0915, 0.08, .0,   -0.0915, -0.08, .0,   -0.0915, 0.08, .0]).T
+        self.pb = np.matrix([.0, .0, 0.16, 0., 0., 0., 1.]).T
+        self.vb = np.matrix([.0] * 6).T
         self.model = model
         self.data = self.model.createData()
 
+        self.ut = Utility()
+
     def get_contact_target(self, time):
         if self.gait == 'trot':
-            self.segments = np.asarray([20, 20, 20, 20])
-            self.duration = np.asarray([10, 10, 10, 10])
-            self.offset = np.asarray([0, 10, 10, 0])
+            self.segments = np.array([20, 20, 20, 20])
+            self.duration = np.array([10, 10, 10, 10])
+            self.offset = np.array([0, 10, 10, 0])
             self.step_period = self.segments[0] * self.dtPlan
         # iter = time / self.dt
         iterPlan = time / self.dtPlan
@@ -185,9 +191,9 @@ class Planner:
 
     def get_step_phase(self, time):
         if self.gait == 'trot':
-            self.segments = np.asarray([20, 20, 20, 20])
-            self.duration = np.asarray([10, 10, 10, 10])
-            self.offset = np.asarray([0, 10, 10, 0])
+            self.segments = np.array([20, 20, 20, 20])
+            self.duration = np.array([10, 10, 10, 10])
+            self.offset = np.array([0, 10, 10, 0])
             self.step_period = self.segments[0] * self.dtPlan
         iter = time / self.dt
         # iterPlan = time / self.dtPlan
@@ -205,7 +211,7 @@ class Planner:
         self.get_step_phase(self.timer)
 
     def update_body_target(self):
-        body_pos_des = np.asmatrix([0., 0., 0.16])
+        body_pos_des = np.matrix([0., 0., 0.16])
         body_rot_des = R.from_matrix([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
         return [body_pos_des, body_rot_des]
 
@@ -230,20 +236,26 @@ class Planner:
                 # self.pf_hold[leg*3 + 1] = self.pf_init[leg*3 + 1]
                 # self.pf_hold[leg*3 + 2] = self.pf_init[leg*3 + 2]
 
-                yaw = transformations.euler_from_quaternion(est.pb_[3:7])[2]
+                yaw = transformations.euler_from_quaternion(self.ut.m2l(est.pb_[3:7]))[2]
                 rot_b2w = np.matrix([[math.cos(-yaw),-math.sin(-yaw)],
                                      [math.sin(-yaw),math.cos(-yaw)]])
                 Kp = np.diag([-0.03, -0.03])
                 self.pf_hold[leg * 3 + 0 : leg * 3 + 2] = \
-                    np.asarray( \
-                    np.asmatrix(est.pb_[0 : 2] + est.vb_[0 : 2] * self.step_period / 2.0).T \
-                    + rot_b2w * Kp *rot_b2w.T * np.asmatrix(plan.vb[0 : 2] - est.vb_[0 : 2]).T \
-                    + rot_b2w * np.asmatrix(self.ph_body[leg * 3 + 0 : leg * 3 + 2]).T \
-                        )[:, 0]
+                    ( \
+                    est.pb_[0 : 2] + est.vb_[0 : 2] * self.step_period / 2.0 \
+                    + rot_b2w * Kp *rot_b2w.T * (plan.vb[0 : 2] - est.vb_[0 : 2]) \
+                    + rot_b2w * self.ph_body[leg * 3 + 0 : leg * 3 + 2] \
+                        )
                 self.pf_hold[leg * 3 + 2] = self.pf_init[leg * 3 + 2]
                 self.pf[leg*3 + 0] = self.pf_init[leg*3 + 0] + (self.pf_hold[leg*3 + 0] - self.pf_init[leg*3 + 0])*self.swing_phase[leg]
                 self.pf[leg*3 + 1] = self.pf_init[leg*3 + 1] + (self.pf_hold[leg*3 + 1] - self.pf_init[leg*3 + 1])*self.swing_phase[leg]
                 self.pf[leg*3 + 2] = self.pf_init[leg*3 + 2] + (math.cos((self.swing_phase[leg]-0.5)*3.14*2)+1)/2*0.03
+                self.vf[leg*3 + 0] = 0
+                self.vf[leg*3 + 1] = 0
+                self.vf[leg*3 + 2] = (-math.sin((self.swing_phase[leg]-0.5)*3.14*2)+1)/2*0.03*3.14*2
+                self.af[leg*3 + 0] = 0
+                self.af[leg*3 + 1] = 0
+                self.af[leg*3 + 2] = (-math.cos((self.swing_phase[leg]-0.5)*3.14*2)+1)/2*0.03*3.14*2*3.14*2
 
     def phase_abnormal_handle(self):
         if 0 == [[e > 1.0 for e in self.contact_phase] + [e > 1.0 for e in self.swing_phase]].count(True):
@@ -263,19 +275,19 @@ class Planner:
 
 class Controller:
     def __init__(self, model):
-        self.tor = np.asarray([.0] * 18)
-        self.body_pos_des = np.asmatrix([.0, .0, 0.16])
+        self.tor = np.matrix([.0] * 18).T
+        self.body_pos_des = np.matrix([.0, .0, 0.16])
         self.body_rot_des = R.from_matrix([[1., .0, .0], [.0, 1., .0], [0., 0., 1.]])
-        self.body_acc_des = np.asmatrix([0.] * 6).T
-        self.body_pos_fdb = np.asmatrix(env.reset()[0:3])
+        self.body_acc_des = np.matrix([0.] * 6).T
+        self.body_pos_fdb = np.matrix(env.reset()[0:3])
         self.body_rot_fdb = R.from_matrix([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
         self.model = model
         self.data = self.model.createData()
-        self.pin_inter = PinInter()
+        self.ut = Utility()
 
     def step_high_slope(self, p, o):
-        kp = np.asarray([100.] * 6)
-        ddp = np.asarray([0.] * 6)
+        kp = np.array([100.] * 6)
+        ddp = np.array([0.] * 6)
         ddp[0:3] = np.multiply(kp[0:3], o[0] - p[0:3])
 
         return self.tor
@@ -286,7 +298,7 @@ class Controller:
         foot_pos_cmd = observation[20:32]
         step_phase = observation[12:16]
         contact = observation[16:20]
-        footHold = np.asarray(baseLinearVelocityLocal[0:2]) * 1.0 / self.step_freq * (0.5 + 0.05)
+        footHold = np.array(baseLinearVelocityLocal[0:2]) * 1.0 / self.step_freq * (0.5 + 0.05)
         action = [0.] * 12
         kp = [20., -20., 0.]
         kd = [2., -2., 0.]
@@ -303,8 +315,8 @@ class Controller:
         return action
 
     def optimal_control(self, est, plan):
-        pin_q_ = self.pin_inter.to_pin(est.q_, 7)
-        pin_dq_ = self.pin_inter.to_pin(est.dq_, 6)
+        pin_q_ = self.ut.to_pin(est.q_, 7)
+        pin_dq_ = self.ut.to_pin(est.dq_, 6)
         JB = est.JB
         Jfoot = est.Jfoot
         JdB = est.JdB
@@ -313,23 +325,24 @@ class Controller:
         data = self.data
 
         self.body_pos_des = plan.pb[0:3]
-        self.body_rot_des = R.from_quat(plan.pb[3:7])
+        self.body_rot_des = R.from_quat(self.ut.m2l(plan.pb[3:7]))
         self.body_pos_fdb = est.pb_[0:3]
-        self.body_rot_fdb = R.from_quat(est.pb_[3:7])
+        self.body_rot_fdb = R.from_quat(self.ut.m2l(est.pb_[3:7]))
         self.body_vel_des = plan.vb
         self.body_vel_fdb = est.vb_
 
-        self.body_acc_des[0:3, 0] = np.asmatrix(200. * (self.body_pos_des - self.body_pos_fdb)
-                                                + 20. * (self.body_vel_des[0:3] - self.body_vel_fdb[0:3])).T
-        self.body_acc_des[3:6, 0] = np.asmatrix(200. * (self.body_rot_des * self.body_rot_fdb.inv()).as_rotvec()
-                                                + 20. * (self.body_vel_des[3:6] - self.body_vel_fdb[3:6])).T
+        self.body_acc_des[0:3] = 200. * (self.body_pos_des - self.body_pos_fdb) \
+                                                + 20. * (self.body_vel_des[0:3] - self.body_vel_fdb[0:3])
+        self.body_acc_des[3:6] = 200. * np.matrix((self.body_rot_des * self.body_rot_fdb.inv()).as_rotvec()).T \
+                                                + 20. * (self.body_vel_des[3:6] - self.body_vel_fdb[3:6])
 
-        # self.body_acc_des = self.body_acc_des - 8 * np.asmatrix(est.vb_).T
-        self.foot_acc_des = np.asmatrix(500.*(plan.pf - est.pf_)).T - 5. * est.vf_
+        # self.body_acc_des = self.body_acc_des - 8 * np.matrix(est.vb_).T
+        self.foot_acc_des = 500.*(plan.pf - est.pf_) + 5. * (plan.vf - est.vf_) + \
+            plan.af
 
         # WBC task 1: contact foot not slip
         pin.crba(model, data, pin_q_)
-        M = np.asmatrix(data.M)
+        M = np.matrix(data.M)
         # ddx = np.zeros(12).reshape(12, 1)
         ddx = self.foot_acc_des
         JF = Jfoot
@@ -383,9 +396,9 @@ class Controller:
         # friction cone constrain
         for leg in range(4):
             if plan.contact_phase[leg] > 0.00001:
-                A[leg*4+18:leg*4+22, leg*3+18:leg*3+21] = np.asmatrix([[1., 0., -mu_c], [-1., 0., -mu_c], [0., 1., -mu_c], [0., -1., -mu_c]])
+                A[leg*4+18:leg*4+22, leg*3+18:leg*3+21] = np.matrix([[1., 0., -mu_c], [-1., 0., -mu_c], [0., 1., -mu_c], [0., -1., -mu_c]])
             else:
-                A[leg*4+18:leg*4+22, leg*3+18:leg*3+21] = np.asmatrix([[0., 0., 0.], [0., 0., 0.], [0., 0., 0.], [0., 0., 0.]])
+                A[leg*4+18:leg*4+22, leg*3+18:leg*3+21] = np.matrix([[0., 0., 0.], [0., 0., 0.], [0., 0., 0.], [0., 0., 0.]])
         # A[0:18, 18:30] = JF.T.zeros()
         # A[0:18, 18:30] = ca.DM.zeros(18, 12)
         lba = ca.DM.zeros(34)
@@ -419,10 +432,10 @@ class Controller:
         x_opt = r['x']
         # print('x_opt:', x_opt)
 
-        pin_tor[0:18, 0] = x_opt[0:18]
-        f[0:12, 0] = x_opt[18:30]
+        pin_tor[0:18] = x_opt[0:18]
+        f[0:12] = x_opt[18:30]
         delta_ddx = np.matrix([.0]*6).T
-        delta_ddx[0: 6, 0] = x_opt[30: 36]
+        delta_ddx[0: 6] = x_opt[30: 36]
         # delta_ddq[0: 6] = x_opt[30: 36]
         # print('tor == M * ddq + nle - J.T*f:', M * (pin_ddq + J2_pre_dpinv * delta_ddx) + nle - JF.T * f)
         # print('ddq:', np.linalg.inv(M) * (pin_tor + JF.T * f - nle))
@@ -435,10 +448,10 @@ class Controller:
         a = pin.getFrameAcceleration(model, data, model.getFrameId('body_link'), pin.LOCAL_WORLD_ALIGNED)
         # print("a body cmd: ", a)
 
-        self.tor = self.pin_inter.from_pin(pin_tor, 6)
+        self.tor = self.ut.from_pin(pin_tor, 6)
 
         pin.aba(model, data, pin_q_, pin_dq_, pin_tor + est.Jfoot.T * f)
-        pin_ddq_ = self.pin_inter.from_pin(data.ddq, 6)
+        pin_ddq_ = self.ut.from_pin(data.ddq, 6)
         # print('pin_ddq_:', pin_ddq_)
 
         return self.tor
@@ -507,6 +520,8 @@ class RosPublish:
 
         rospy.init_node('talker', anonymous=True)
 
+        self.ut = Utility()
+
     def step(self, est, plan, control):
         self.pub_tf(est, plan)
         self.pub_path(est, plan)
@@ -519,9 +534,10 @@ class RosPublish:
     def pub_tf(self, est, plan):
 
         def pub_tf_body_link():
+            pb_ = self.ut.m2l(est.pb_)
             tf_body_ = Transform(
-                translation=gmsg.Vector3(est.pb_[0], est.pb_[1], est.pb_[2]),
-                rotation=gmsg.Quaternion(est.pb_[3], est.pb_[4], est.pb_[5], est.pb_[6])
+                translation=gmsg.Vector3(pb_[0], pb_[1], pb_[2]),
+                rotation=gmsg.Quaternion(pb_[3], pb_[4], pb_[5], pb_[6])
             )
 
             st = gmsg.TransformStamped()
@@ -553,24 +569,26 @@ class RosPublish:
                 br = tf2_ros.TransformBroadcaster()
                 br.sendTransform(st)
 
-            pub_tf_single_link('body_link', 'RF1_link', [0.0915, -0.08, 0], 'x', est.q_[7 + 0])
-            pub_tf_single_link('RF1_link', 'RF2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 1])
-            pub_tf_single_link('RF2_link', 'RF3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 2])
+            q_ = self.ut.m2l(est.q_)
+
+            pub_tf_single_link('body_link', 'RF1_link', [0.0915, -0.08, 0], 'x', q_[7 + 0])
+            pub_tf_single_link('RF1_link', 'RF2_link', [0.0, 0.0, -0.046], 'y', q_[7 + 1])
+            pub_tf_single_link('RF2_link', 'RF3_link', [0.0, 0.0, -0.066], 'y', q_[7 + 2])
             pub_tf_single_link('RF3_link', 'RFFoot_link', [0.0, 0.0, -0.065], 'x', 0)
 
-            pub_tf_single_link('body_link', 'LF1_link', [0.0915,  0.08, 0], 'x', est.q_[7 + 3])
-            pub_tf_single_link('LF1_link', 'LF2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 4])
-            pub_tf_single_link('LF2_link', 'LF3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 5])
+            pub_tf_single_link('body_link', 'LF1_link', [0.0915,  0.08, 0], 'x', q_[7 + 3])
+            pub_tf_single_link('LF1_link', 'LF2_link', [0.0, 0.0, -0.046], 'y', q_[7 + 4])
+            pub_tf_single_link('LF2_link', 'LF3_link', [0.0, 0.0, -0.066], 'y', q_[7 + 5])
             pub_tf_single_link('LF3_link', 'LFFoot_link', [0.0, 0.0, -0.065], 'x', 0)
 
-            pub_tf_single_link('body_link', 'RH1_link', [-0.0915, -0.08, 0], 'x', est.q_[7 + 6])
-            pub_tf_single_link('RH1_link', 'RH2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 7])
-            pub_tf_single_link('RH2_link', 'RH3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 8])
+            pub_tf_single_link('body_link', 'RH1_link', [-0.0915, -0.08, 0], 'x', q_[7 + 6])
+            pub_tf_single_link('RH1_link', 'RH2_link', [0.0, 0.0, -0.046], 'y', q_[7 + 7])
+            pub_tf_single_link('RH2_link', 'RH3_link', [0.0, 0.0, -0.066], 'y', q_[7 + 8])
             pub_tf_single_link('RH3_link', 'RHFoot_link', [0.0, 0.0, -0.065], 'x', 0)
 
-            pub_tf_single_link('body_link', 'LH1_link', [-0.0915, 0.08, 0], 'x', est.q_[7 + 9])
-            pub_tf_single_link('LH1_link', 'LH2_link', [0.0, 0.0, -0.046], 'y', est.q_[7 + 10])
-            pub_tf_single_link('LH2_link', 'LH3_link', [0.0, 0.0, -0.066], 'y', est.q_[7 + 11])
+            pub_tf_single_link('body_link', 'LH1_link', [-0.0915, 0.08, 0], 'x', q_[7 + 9])
+            pub_tf_single_link('LH1_link', 'LH2_link', [0.0, 0.0, -0.046], 'y', q_[7 + 10])
+            pub_tf_single_link('LH2_link', 'LH3_link', [0.0, 0.0, -0.066], 'y', q_[7 + 11])
             pub_tf_single_link('LH3_link', 'LHFoot_link', [0.0, 0.0, -0.065], 'x', 0)
 
 
@@ -578,6 +596,8 @@ class RosPublish:
         pub_tf_leg_link()
 
     def pub_path(self, est, plan):
+
+        pf = self.ut.m2l(plan.pf)
 
         def pub_foot_path(leg_id):
             self.foot_path[leg_id].header.frame_id = "world"
@@ -589,9 +609,9 @@ class RosPublish:
             # pose.pose.position.x = est.pf_[leg_id*3 + 0]
             # pose.pose.position.y = est.pf_[leg_id*3 + 1]
             # pose.pose.position.z = est.pf_[leg_id*3 + 2]
-            pose.pose.position.x = plan.pf[leg_id*3 + 0]
-            pose.pose.position.y = plan.pf[leg_id*3 + 1]
-            pose.pose.position.z = plan.pf[leg_id*3 + 2]
+            pose.pose.position.x = pf[leg_id*3 + 0]
+            pose.pose.position.y = pf[leg_id*3 + 1]
+            pose.pose.position.z = pf[leg_id*3 + 2]
             quaternion = quaternion_from_euler(
                 0, 0, 0)
             pose.pose.orientation.x = quaternion[0]
@@ -618,12 +638,21 @@ class RosPublish:
         pub_foot_path(3)
 
     def pub_point(self, est, plan):
+
+        pf_init = self.ut.m2l(plan.pf_init)
+
         def pub_foot_point(leg_id):
             self.foot_point[leg_id].header.frame_id = 'world'
             self.foot_point[leg_id].header.stamp = rospy.Time.now()
-            self.foot_point[leg_id].point.x = est.pf_[leg_id*3 + 0]
-            self.foot_point[leg_id].point.y = est.pf_[leg_id*3 + 1]
-            self.foot_point[leg_id].point.z = est.pf_[leg_id*3 + 2]
+            # self.foot_point[leg_id].point.x = est.pf_[leg_id*3 + 0]
+            # self.foot_point[leg_id].point.y = est.pf_[leg_id*3 + 1]
+            # self.foot_point[leg_id].point.z = est.pf_[leg_id*3 + 2]
+            self.foot_point[leg_id].point.x = pf_init[leg_id*3 + 0]
+            self.foot_point[leg_id].point.y = pf_init[leg_id*3 + 1]
+            self.foot_point[leg_id].point.z = pf_init[leg_id*3 + 2]
+            # self.foot_point[leg_id].point.x = plan.pf_hold[leg_id*3 + 0]
+            # self.foot_point[leg_id].point.y = plan.pf_hold[leg_id*3 + 1]
+            # self.foot_point[leg_id].point.z = plan.pf_hold[leg_id*3 + 2]
             self.foot_point_pub[leg_id].publish(self.foot_point[leg_id])
 
         pub_foot_point(0)
@@ -667,6 +696,9 @@ class RosPublish:
     #     pub_foot_force(3)
 
     def pub_marker(self, est, plan):
+
+        pf_ = self.ut.m2l(est.pf_)
+
         def pub_foot_marker(leg_id):
             self.foot_marker[leg_id].header.frame_id = 'world'
             self.foot_marker[leg_id].header.stamp = rospy.Time.now()
@@ -674,9 +706,9 @@ class RosPublish:
             self.foot_marker[leg_id].id = leg_id
             self.foot_marker[leg_id].type = vmsg.Marker.ARROW
             self.foot_marker[leg_id].action = vmsg.Marker.MODIFY
-            self.foot_marker[leg_id].pose.position.x = est.pf_[leg_id*3 + 0]
-            self.foot_marker[leg_id].pose.position.y = est.pf_[leg_id*3 + 1]
-            self.foot_marker[leg_id].pose.position.z = est.pf_[leg_id*3 + 2]
+            self.foot_marker[leg_id].pose.position.x = pf_[leg_id*3 + 0]
+            self.foot_marker[leg_id].pose.position.y = pf_[leg_id*3 + 1]
+            self.foot_marker[leg_id].pose.position.z = pf_[leg_id*3 + 2]
             self.foot_marker[leg_id].pose.orientation.x = 0
             self.foot_marker[leg_id].pose.orientation.y = 0
             self.foot_marker[leg_id].pose.orientation.z = 0
@@ -697,12 +729,15 @@ class RosPublish:
         pub_foot_marker(3)
 
     def pub_state(self, est, plan, control):
+
+        tor = self.ut.m2l(control.tor)
+
         def pub_joint_state():
             self.joint_state.header.frame_id = 'world'
             self.joint_state.header.stamp = rospy.Time.now()
             for joint in range(12):
                 # self.joint_state.effort[joint] = est.tor_[joint]
-                self.joint_state.effort[joint] = control.tor[6 + joint]
+                self.joint_state.effort[joint] = tor[6 + joint]
             self.joint_state_pub.publish(self.joint_state)
 
         pub_joint_state()
@@ -727,8 +762,8 @@ if __name__ == '__main__':
 
         # simulation
         # leg order: LF-RF-LH-RH
-        torque = list(control.tor[6 + 3:6 + 6]) + list(control.tor[6 + 0:6 + 3]) + list(control.tor[6 + 9:6 + 12]) \
-                 + list(control.tor[6 + 6:6 + 9])
+        torque = list(control.tor[6 + 3:6 + 6, 0]) + list(control.tor[6 + 0:6 + 3, 0]) + list(control.tor[6 + 9:6 + 12, 0]) \
+                 + list(control.tor[6 + 6:6 + 9, 0])
         [o_, pb_, vb_, js_] = env.step_torque(torque)
         # js_ = list(js_[0:3]) + list(js_[6:9]) + list(js_[3:6]) + list(js_[9:12])
         js_ = list(js_[3:6]) + list(js_[0:3]) + list(js_[9:12]) + list(js_[6:9])
@@ -737,18 +772,18 @@ if __name__ == '__main__':
         pj_ = [i[0] for i in js_]
         vj_ = [i[1] for i in js_]
         tj_ = [i[3] for i in js_]
-        q_ = np.asmatrix(list(pb_[0] + pb_[1]) + pj_).T
-        dq_ = np.asmatrix(list(vb_[0] + vb_[1]) + vj_).T
-        tor_ = np.asmatrix([.0]*6 + tj_).T
+        q_ = np.matrix(list(pb_[0] + pb_[1]) + pj_).T
+        dq_ = np.matrix(list(vb_[0] + vb_[1]) + vj_).T
+        tor_ = np.matrix([.0]*6 + tj_).T
 
 
         est.q_ = q_
         est.dq_ = dq_
         est.tor_ = tor_
-        est.pb_[0:3] = pb_[0]
-        est.pb_[3:7] = pb_[1]
-        est.vb_[0:3] = vb_[0]
-        est.vb_[3:6] = vb_[1]
+        est.pb_[0:3] = np.matrix(pb_[0]).T
+        est.pb_[3:7] = np.matrix(pb_[1]).T
+        est.vb_[0:3] = np.matrix(vb_[0]).T
+        est.vb_[3:6] = np.matrix(vb_[1]).T
         est.step()
 
         plan.step(est)
