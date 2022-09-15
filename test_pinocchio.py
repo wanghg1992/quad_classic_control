@@ -33,6 +33,7 @@ class Controller:
 
         return self.torque
 
+
 if __name__ == '__main__':
     # id = "gym_env:Quadruped-v0"
     # env = gym.make(id)
@@ -55,7 +56,7 @@ if __name__ == '__main__':
     ## quadruped model
     root = pin.JointModelFreeFlyer()
     model = pin.buildModelFromUrdf(pybullet_data.getDataPath() + '/urdf/quadruped_robot/quadruped_robot.urdf',
-                                         root)
+                                   root)
     # model = pin.buildModelFromUrdf(pybullet_data.getDataPath()+'/urdf/quadruped_robot/quadruped_robot.urdf')
     data = model.createData()
 
@@ -70,14 +71,14 @@ if __name__ == '__main__':
     q = pin.randomConfiguration(model, -qmax, qmax)
     # dq = np.matrix(np.random.rand(model.nv, 1))
     # ddq = np.matrix(np.random.rand(model.nv, 1))
-    q = np.matrix([0.5]*model.nq).T
-    dq = np.matrix([1.0]*model.nv).T
-    ddq = np.matrix([1.0]*model.nv).T
+    q = np.matrix([0.5] * model.nq).T
+    dq = np.matrix([1.0] * model.nv).T
+    ddq = np.matrix([1.0] * model.nv).T
     tau = pin.rnea(model, data, q, dq, ddq)
     # print('tau = ', tau.T)
 
     ### kinemaitcs and jacbian
-    q = np.asarray([0]*model.nq)
+    q = np.asarray([0] * model.nq)
     pin.forwardKinematics(model, data, q)
     # for name, oMi in zip(model.names, data.oMi):
     #     print(("{:<24} : {: .2f} {: .2f} {: .2f}"
@@ -109,8 +110,8 @@ if __name__ == '__main__':
     J = np.append(J, Jrh, axis=0)
     J = np.append(J, Jlh, axis=0)
     J = np.asmatrix(J)
-    f = np.matrix([0.4, 0.5, 6]*4).T
-    tau = M * ddq + nle - J.T*f
+    f = np.matrix([0.4, 0.5, 6] * 4).T
+    tau = M * ddq + nle - J.T * f
     print('tau = ', tau.T)
 
     # x = tau-qdd_delta-force_delta
@@ -150,19 +151,19 @@ if __name__ == '__main__':
 
     # tau + J.T*f = M * ddq + nle
     # x = tau(18)-qdd_delta(6)-force_delta(12)
-    H = ca.DM.eye(18+6+12)
+    H = ca.DM.eye(18 + 6 + 12)
     for i in range(18):
         H[i, i] = 0
-    g = ca.DM.zeros(18+6+12)
+    g = ca.DM.zeros(18 + 6 + 12)
     # A = ca.DM.eye(18)
     A = ca.DM.zeros(24, 36)
     A[0:18, 0:18] = ca.DM.eye(18)
     A[0:18, 18:24] = -M[0:18, 0:6]
     A[0:18, 24:36] = J.T
     for i in range(6):
-        A[18+i, i] = 1
+        A[18 + i, i] = 1
     lba = ca.DM.zeros(24)
-    lba[0:18] = M * ddq + nle - J.T*f
+    lba[0:18] = M * ddq + nle - J.T * f
     uba = lba
     qp = {'h': H.sparsity(), 'a': A.sparsity()}
     S = ca.conic('S', 'qpoases', qp)
@@ -171,9 +172,8 @@ if __name__ == '__main__':
     print('x_opt:', x_opt)
     ddq[0:6, 0] = ddq[0:6, 0] + x_opt[18:24]
     f[0:12, 0] = f[0:12, 0] + x_opt[24:36]
-    print('M * ddq + nle - J.T*f:', M * ddq + nle - J.T*f)
+    print('M * ddq + nle - J.T*f:', M * ddq + nle - J.T * f)
 
     # a = np.array([0, 1.0])
     # a[0] = 0.1
     # print(a)
-

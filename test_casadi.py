@@ -11,7 +11,7 @@ if __name__ == '__main__':
     print(x[1, 2])
     print(y)
     print(Z[0, 1])
-    f = x**2 + 10
+    f = x ** 2 + 10
     f = ca.sqrt(f)
     print('f:', f)
     B1 = ca.SX.zeros(4, 5)
@@ -34,7 +34,7 @@ if __name__ == '__main__':
     print('C_sparse:', C_sparse)
 
     # QP(Low-level interface)
-    H = 2*ca.DM.eye(2)
+    H = 2 * ca.DM.eye(2)
     A = ca.DM.ones(1, 2)
     g = ca.DM.zeros(2)
     lba = 10
@@ -44,7 +44,6 @@ if __name__ == '__main__':
     r = S(h=H, g=g, a=A, lba=lba)
     x_opt = r['x']
     print('x_opt:', x_opt)
-
 
     opti = ca.Opti()
     x = opti.variable()
