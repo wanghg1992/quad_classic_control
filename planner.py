@@ -106,12 +106,12 @@ class Planner:
             self.duration = np.array([5, 5, 5, 5])
             self.offset = np.array([0, 5, 5, 0])
             self.step_period = self.segments[0] * self.dtPlan
-        iter = time / self.dt
+        iter = round(time / self.dt)
         # iterPlan = time / self.dtPlan
         for leg in range(4):
             normIter = (iter + self.segments[leg] * self.iterPerPlan - self.offset[leg] * self.iterPerPlan) % (
-                        self.segments[leg] * self.iterPerPlan)
-            if normIter < self.duration[leg] * self.iterPerPlan:
+                    self.segments[leg] * self.iterPerPlan) + 1
+            if normIter <= self.duration[leg] * self.iterPerPlan:
                 self.contact_phase[leg] = normIter / float(self.duration[leg] * self.iterPerPlan)
                 self.swing_phase[leg] = 0
             else:
