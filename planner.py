@@ -28,21 +28,21 @@ class SimpleBezier:
         x = phase
         delta_p = self.pf - self.pi
         self.p = self.pi + delta_p * (x * x * x + 3. * (x * x * (1. - x)))
-        self.v = delta_p * (6. * x * (1. - x))
-        self.a = delta_p * (6. - 12. * x)
+        self.v = delta_p * (6. * x * (1. - x)) / self.time
+        self.a = delta_p * (6. - 12. * x) / self.time / self.time
 
         if phase < 0.5:
             x = phase * 2
             delta_p_z = self.height
             self.p[2] = self.pi[2] + delta_p_z * (x * x * x + 3. * (x * x * (1. - x)))
-            self.v[2] = delta_p_z * (6. * x * (1. - x))
-            self.a[2] = delta_p_z * (6. - 12. * x)
+            self.v[2] = delta_p_z * (6. * x * (1. - x)) * 2 / self.time
+            self.a[2] = delta_p_z * (6. - 12. * x) * 4 / self.time / self.time
         else:
             x = (phase - 0.5) * 2
             delta_p_z = self.pf[2] - (self.pi[2] + self.height)
             self.p[2] = self.pi[2] + self.height + delta_p_z * (x * x * x + 3. * (x * x * (1. - x)))
-            self.v[2] = delta_p_z * (6. * x * (1. - x))
-            self.a[2] = delta_p_z * (6. - 12. * x)
+            self.v[2] = delta_p_z * (6. * x * (1. - x)) * 2 / self.time
+            self.a[2] = delta_p_z * (6. - 12. * x) * 4 / self.time / self.time
 
     def get_position(self):
         return self.p
@@ -82,6 +82,8 @@ class Planner:
         self.vb = np.matrix([.0] * 6).T
         self.model = model
         self.data = self.model.createData()
+
+        self.foot_trajectory = [SimpleBezier(), SimpleBezier(), SimpleBezier(), SimpleBezier()]
 
         self.ut = Utility()
 
@@ -164,21 +166,29 @@ class Planner:
                                 + rot_b2w * self.ph_body[leg * 3 + 0: leg * 3 + 2] \
                         )
                 self.pf_hold[leg * 3 + 2] = self.pf_init[leg * 3 + 2]
-                self.pf[leg * 3 + 0] = self.pf_init[leg * 3 + 0] + (
-                            self.pf_hold[leg * 3 + 0] - self.pf_init[leg * 3 + 0]) * self.swing_phase[leg]
-                self.pf[leg * 3 + 1] = self.pf_init[leg * 3 + 1] + (
-                            self.pf_hold[leg * 3 + 1] - self.pf_init[leg * 3 + 1]) * self.swing_phase[leg]
-                self.pf[leg * 3 + 2] = self.pf_init[leg * 3 + 2] + (
-                            math.cos((self.swing_phase[leg] - 0.5) * 3.14 * 2) + 1) / 2 * 0.03
                 swing_time = (self.segments[leg] - self.duration[leg]) * self.dtPlan
-                self.vf[leg * 3 + 0] = 0
-                self.vf[leg * 3 + 1] = 0
-                self.vf[leg * 3 + 2] = -math.sin(
-                    (self.swing_phase[leg] - 0.5) * 3.14 * 2) / 2 * 0.03 * 3.14 * 2 / swing_time
-                self.af[leg * 3 + 0] = 0
-                self.af[leg * 3 + 1] = 0
-                self.af[leg * 3 + 2] = -math.cos(
-                    (self.swing_phase[leg] - 0.5) * 3.14 * 2) / 2 * 0.03 * 3.14 * 2 * 3.14 * 2 / swing_time / swing_time
+
+                # self.pf[leg * 3 + 0] = self.pf_init[leg * 3 + 0] + (
+                #             self.pf_hold[leg * 3 + 0] - self.pf_init[leg * 3 + 0]) * self.swing_phase[leg]
+                # self.pf[leg * 3 + 1] = self.pf_init[leg * 3 + 1] + (
+                #             self.pf_hold[leg * 3 + 1] - self.pf_init[leg * 3 + 1]) * self.swing_phase[leg]
+                # self.pf[leg * 3 + 2] = self.pf_init[leg * 3 + 2] + (
+                #             math.cos((self.swing_phase[leg] - 0.5) * 3.14 * 2) + 1) / 2 * 0.03
+                # self.vf[leg * 3 + 0] = 0
+                # self.vf[leg * 3 + 1] = 0
+                # self.vf[leg * 3 + 2] = -math.sin(
+                #     (self.swing_phase[leg] - 0.5) * 3.14 * 2) / 2 * 0.03 * 3.14 * 2 / swing_time
+                # self.af[leg * 3 + 0] = 0
+                # self.af[leg * 3 + 1] = 0
+                # self.af[leg * 3 + 2] = -math.cos(
+                #     (self.swing_phase[leg] - 0.5) * 3.14 * 2) / 2 * 0.03 * 3.14 * 2 * 3.14 * 2 / swing_time / swing_time
+
+                self.foot_trajectory[leg].set_line(swing_time, self.pf_init[leg * 3 + 0: leg * 3 + 3],
+                                                   self.pf_hold[leg * 3 + 0: leg * 3 + 3], 0.03)
+                self.foot_trajectory[leg].compute_point(self.swing_phase[leg])
+                self.pf[leg * 3 + 0: leg * 3 + 3] = self.foot_trajectory[leg].get_position()
+                self.vf[leg * 3 + 0: leg * 3 + 3] = self.foot_trajectory[leg].get_velocity()
+                self.af[leg * 3 + 0: leg * 3 + 3] = self.foot_trajectory[leg].get_acceleration()
 
     def phase_abnormal_handle(self):
         if 0 == [[e > 1.0 for e in self.contact_phase] + [e > 1.0 for e in self.swing_phase]].count(True):
