@@ -73,11 +73,11 @@ if __name__ == '__main__':
         est.contact_state_ = np.array(fs_[1])
         est.step()
 
+        rospub.step(est, plan, control)
+
         plan.step(est)
 
         torque = control.step(est, plan)
-
-        rospub.step(est, plan, control)
 
         # env.render()
     input("press any key to continue...")
