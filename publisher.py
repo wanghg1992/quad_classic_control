@@ -44,11 +44,12 @@ class RosPublish:
         #                        rospy.Publisher('lh_foot_pose', gmsg.PoseStamped, queue_size=10)]
 
         # publish wrench
-        # self.foot_force = [gmsg.WrenchStamped(), gmsg.WrenchStamped(), gmsg.WrenchStamped(), gmsg.WrenchStamped()]
-        # self.foot_force_pub = [rospy.Publisher('rf_foot_force', gmsg.WrenchStamped, queue_size=10),
-        #                        rospy.Publisher('lf_foot_force', gmsg.WrenchStamped, queue_size=10),
-        #                        rospy.Publisher('rh_foot_force', gmsg.WrenchStamped, queue_size=10),
-        #                        rospy.Publisher('lh_foot_force', gmsg.WrenchStamped, queue_size=10)]
+        self.foot_force = [gmsg.WrenchStamped(), gmsg.WrenchStamped(), gmsg.WrenchStamped(), gmsg.WrenchStamped()]
+        self.foot_force_pub = [rospy.Publisher('rf_foot_force', gmsg.WrenchStamped, queue_size=10),
+                               rospy.Publisher('lf_foot_force', gmsg.WrenchStamped, queue_size=10),
+                               rospy.Publisher('rh_foot_force', gmsg.WrenchStamped, queue_size=10),
+                               rospy.Publisher('lh_foot_force', gmsg.WrenchStamped, queue_size=10)]
+        self.foot_name = ['RFFoot_link', 'LFFoot_link', 'RHFoot_link', 'LHFoot_link']
 
         # publish marker
         self.foot_marker = [vmsg.Marker(), vmsg.Marker(), vmsg.Marker(), vmsg.Marker()]
@@ -73,7 +74,9 @@ class RosPublish:
         # publish debug data
         self.debug_data = smsg.JointState()
         self.debug_data_pub = rospy.Publisher('debug_data', smsg.JointState, queue_size=10)
-        self.debug_data_name = ['swing_phase_rf', 'contact_phase_rf', 'pf_init_z_rf', 'pf_z_rf', 'pf_z_rf_']
+        self.debug_data_name = ['swing_phase_rf', 'contact_phase_rf', 'pf_init_z_rf', 'pf_z_rf', 'pf_z_rf_',
+                                'vf_z_rf', 'vf_z_rf_', 'pf_y_rf', 'pf_y_rf_',
+                                'vf_y_rf', 'vf_y_rf_']
         for i in range(len(self.debug_data_name)):
             self.debug_data.name.append(self.debug_data_name[i])
             self.debug_data.position.append(.0)
@@ -240,22 +243,22 @@ class RosPublish:
     #     pub_foot_pose(2)
     #     pub_foot_pose(3)
 
-    # def pub_wrench(self, est, plan):
-    #     def pub_foot_force(leg_id):
-    #         self.foot_force[leg_id].header.frame_id = 'LFFoot_link'
-    #         self.foot_force[leg_id].header.stamp = rospy.Time.now()
-    #         self.foot_force[leg_id].wrench.force.x = 0
-    #         self.foot_force[leg_id].wrench.force.y = 0
-    #         self.foot_force[leg_id].wrench.force.z = 1
-    #         self.foot_force[leg_id].wrench.torque.x = 0
-    #         self.foot_force[leg_id].wrench.torque.y = 0
-    #         self.foot_force[leg_id].wrench.torque.z = 0
-    #         self.foot_force_pub[leg_id].publish(self.foot_force[leg_id])
-    #
-    #     pub_foot_force(0)
-    #     pub_foot_force(1)
-    #     pub_foot_force(2)
-    #     pub_foot_force(3)
+    def pub_wrench(self, est, plan):
+        def pub_foot_force(leg_id):
+            self.foot_force[leg_id].header.frame_id = self.foot_name[leg_id]
+            self.foot_force[leg_id].header.stamp = rospy.Time.now()
+            self.foot_force[leg_id].wrench.force.x = est.foot_force_[leg_id * 3 + 0] / 10.0
+            self.foot_force[leg_id].wrench.force.y = est.foot_force_[leg_id * 3 + 1] / 10.0
+            self.foot_force[leg_id].wrench.force.z = est.foot_force_[leg_id * 3 + 2] / 10.0
+            self.foot_force[leg_id].wrench.torque.x = 0
+            self.foot_force[leg_id].wrench.torque.y = 0
+            self.foot_force[leg_id].wrench.torque.z = 0
+            self.foot_force_pub[leg_id].publish(self.foot_force[leg_id])
+
+        pub_foot_force(0)
+        pub_foot_force(1)
+        pub_foot_force(2)
+        pub_foot_force(3)
 
     def pub_marker(self, est, plan):
 
@@ -314,6 +317,12 @@ class RosPublish:
             self.debug_data.position[2] = plan.pf_init[2]
             self.debug_data.position[3] = plan.pf[2]
             self.debug_data.position[4] = est.pf_[2]
+            self.debug_data.position[5] = plan.vf[2]
+            self.debug_data.position[6] = est.vf_[2]
+            self.debug_data.position[7] = plan.pf[1]
+            self.debug_data.position[8] = est.pf_[1]
+            self.debug_data.position[9] = plan.vf[1]
+            self.debug_data.position[10] = est.vf_[1]
             self.debug_data_pub.publish(self.debug_data)
 
         pub_debug_data()

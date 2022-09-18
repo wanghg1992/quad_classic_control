@@ -39,6 +39,9 @@ class Estimator:
         self.Jdlh = np.matrix(np.zeros([6, 18]))
         self.Jdfoot = np.matrix(np.zeros([12, 18]))
 
+        self.foot_force_ = np.array([0.] * 12)
+        self.contact_state_ = np.array([0.] * 4)
+
         self.ut = Utility()
 
     def step(self):
