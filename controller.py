@@ -70,10 +70,17 @@ class Controller:
         self.body_acc_des[3:6] = 200. * np.matrix((self.body_rot_des * self.body_rot_fdb.inv()).as_rotvec()).T \
                                  + 20. * (self.body_vel_des[3:6] - self.body_vel_fdb[3:6])
 
-        # self.body_acc_des = self.body_acc_des - 8 * np.matrix(est.vb_).T
-        self.foot_acc_des = 500. * (plan.pf - est.pf_) + 0. * (plan.vf - est.vf_) + \
+        foot_kp = np.array([.0] * 12)
+        foot_kd = np.array([.0] * 12)
+        for leg in range(4):
+            if plan.swing_phase[leg] > 0.0001:
+                foot_kp[leg * 3 + 0: leg * 3 + 3] = np.array([200., 200., 200.])
+                foot_kd[leg * 3 + 0: leg * 3 + 3] = np.array([200., 200., 200.])
+            else:
+                foot_kp[leg * 3 + 0: leg * 3 + 3] = np.array([0., 0., 0.])
+                foot_kd[leg * 3 + 0: leg * 3 + 3] = np.array([100., 100., 100.])
+        self.foot_acc_des = np.diag(foot_kp) * (plan.pf - est.pf_) + np.diag(foot_kd) * (plan.vf - est.vf_) + \
                             plan.af
-        self.foot_acc_des[2:3:12] = (500. * (plan.pf - est.pf_) + 50. * (plan.vf - est.vf_) + 1.0 * plan.af)[2:3:12]
 
         # WBC task 1: contact foot not slip
         pin.crba(model, data, pin_q_)
