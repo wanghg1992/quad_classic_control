@@ -15,6 +15,7 @@ from utility import Utility
 from estimator import Estimator
 from planner import Planner
 from controller import Controller
+from receiver import Receiver
 from publisher import RosPublish
 
 
@@ -38,6 +39,7 @@ if __name__ == '__main__':
     cp = CommonParameter()
     cp.dt = 1.0 / 240
 
+    rece = Receiver()
     est = Estimator(model, cp)
     plan = Planner(model, cp)
     control = Controller(model)
@@ -62,6 +64,8 @@ if __name__ == '__main__':
         dq_ = np.matrix(list(vb_[0] + vb_[1]) + vj_).T
         tor_ = np.matrix([.0] * 6 + tj_).T
 
+        rece.step()
+
         est.q_ = q_
         est.dq_ = dq_
         est.tor_ = tor_
@@ -75,7 +79,7 @@ if __name__ == '__main__':
 
         rospub.step(est, plan, control)
 
-        plan.step(est)
+        plan.step(rece, est)
 
         torque = control.step(est, plan)
 

@@ -83,6 +83,8 @@ class Planner:
         self.model = model
         self.data = self.model.createData()
 
+        self.stand_height = 0.16
+
         self.foot_trajectory = [SimpleBezier(), SimpleBezier(), SimpleBezier(), SimpleBezier()]
 
         self.ut = Utility()
@@ -123,10 +125,13 @@ class Planner:
     def update_step_phase(self):
         self.get_step_phase(self.timer)
 
-    def update_body_target(self):
-        body_pos_des = np.matrix([0., 0., 0.16])
-        body_rot_des = R.from_matrix([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
-        return [body_pos_des, body_rot_des]
+    def update_body_target(self, rece):
+        # body_pos_des = np.matrix([0., 0., 0.16])
+        # body_rot_des = R.from_matrix([[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
+        self.pb[0:2] = self.pb[0:2] + rece.body_vel[0:2] * self.dt
+        self.pb[2] = self.stand_height + rece.body_pos_offset[2]
+        self.vb[0:2] = rece.body_vel[0:2]
+        return self.pb
 
     def update_foot_target(self, est):
         for leg in range(4):
@@ -196,11 +201,11 @@ class Planner:
         else:
             self.phase_abnormal = True
 
-    def step(self, est_data):
+    def step(self, rece, est):
         if not self.phase_abnormal:
             self.timer = self.timer + self.dt
         self.update_step_phase()
         self.phase_abnormal_handle()
-        self.update_body_target()
-        self.update_foot_target(est_data)
+        self.update_body_target(rece)
+        self.update_foot_target(est)
         return self.pb
