@@ -27,6 +27,7 @@ class CommonParameter:
 if __name__ == '__main__':
     id = "gym_env:Quadruped-v0"
     env = gym.make(id)
+    env.sim_step_time = 0.002
 
     ## quadruped model
     root = pin.JointModelFreeFlyer()
@@ -37,7 +38,7 @@ if __name__ == '__main__':
     torque = [.0] * 12
 
     cp = CommonParameter()
-    cp.dt = 1.0 / 240
+    cp.dt = env.sim_step_time
 
     rece = Receiver()
     est = Estimator(model, cp)

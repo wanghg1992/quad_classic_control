@@ -58,7 +58,7 @@ class Planner:
     def __init__(self, model, common_para):
         self.timer = .0
         self.dt = common_para.dt
-        self.iterPerPlan = 5
+        self.iterPerPlan = 10
         self.dtPlan = self.iterPerPlan * self.dt
         self.horizon = 200
         self.gait = 'trot'
@@ -78,12 +78,12 @@ class Planner:
         self.vf = np.matrix([.0] * 12).T
         self.af = np.matrix([.0] * 12).T
         self.ph_body = np.matrix([0.0915, -0.08, .0, 0.0915, 0.08, .0, -0.0915, -0.08, .0, -0.0915, 0.08, .0]).T
-        self.pb = np.matrix([.0, .0, 0.16, 0., 0., 0., 1.]).T
+        self.pb = np.matrix([.0, .0, 0.14, 0., 0., 0., 1.]).T
         self.vb = np.matrix([.0] * 6).T
         self.model = model
         self.data = self.model.createData()
 
-        self.stand_height = 0.16
+        self.stand_height = 0.14
 
         self.foot_trajectory = [SimpleBezier(), SimpleBezier(), SimpleBezier(), SimpleBezier()]
 
@@ -163,7 +163,7 @@ class Planner:
                 yaw = transformations.euler_from_quaternion(self.ut.m2l(est.pb_[3:7]))[2]
                 rot_b2w = np.matrix([[math.cos(-yaw), -math.sin(-yaw)],
                                      [math.sin(-yaw), math.cos(-yaw)]])
-                Kp = np.diag([-0.03, -0.01])
+                Kp = np.diag([-0.03, -0.015])
                 self.pf_hold[leg * 3 + 0: leg * 3 + 2] = \
                     ( \
                                 est.pb_[0: 2] + est.vb_[0: 2] * self.step_period / 2.0 \

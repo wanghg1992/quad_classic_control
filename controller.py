@@ -58,17 +58,20 @@ class Controller:
         model = self.model
         data = self.data
 
-        self.body_pos_des = plan.pb[0:3]
+        self.body_pos_des = plan.pb[0:3].copy()
         self.body_rot_des = R.from_quat(self.ut.m2l(plan.pb[3:7]))
-        self.body_pos_fdb = est.pb_[0:3]
+        self.body_pos_fdb = est.pb_[0:3].copy()
         self.body_rot_fdb = R.from_quat(self.ut.m2l(est.pb_[3:7]))
-        self.body_vel_des = plan.vb
-        self.body_vel_fdb = est.vb_
+        self.body_vel_des = plan.vb.copy()
+        self.body_vel_fdb = est.vb_.copy()
 
-        self.body_acc_des[0:3] = 200. * (self.body_pos_des - self.body_pos_fdb) \
-                                 + 20. * (self.body_vel_des[0:3] - self.body_vel_fdb[0:3])
-        self.body_acc_des[3:6] = 200. * np.matrix((self.body_rot_des * self.body_rot_fdb.inv()).as_rotvec()).T \
-                                 + 20. * (self.body_vel_des[3:6] - self.body_vel_fdb[3:6])
+        body_kp = np.array([10., 10., 50., 50., 50., 50.])
+        body_kd = np.array([50., 50., 100., 20., 20., 20.])
+        self.body_acc_des[0:3] = np.diag(body_kp[0:3]) * (self.body_pos_des - self.body_pos_fdb) \
+                                 + np.diag(body_kd[0:3]) * (self.body_vel_des[0:3] - self.body_vel_fdb[0:3])
+        self.body_acc_des[3:6] = np.diag(body_kp[3:6]) * np.matrix(
+            (self.body_rot_des * self.body_rot_fdb.inv()).as_rotvec()).T \
+                                 + np.diag(body_kd[3:6]) * (self.body_vel_des[3:6] - self.body_vel_fdb[3:6])
 
         foot_kp = np.array([.0] * 12)
         foot_kd = np.array([.0] * 12)
@@ -192,13 +195,13 @@ class Controller:
         a = pin.getFrameAcceleration(model, data, model.getFrameId('body_link'), pin.LOCAL_WORLD_ALIGNED)
         # print("a body cmd: ", a)
 
-        self.body_vel_des[0:3] = 10 * (self.body_pos_des - self.body_pos_fdb) \
-                                 + (self.body_vel_des[0:3]) * 0
-        self.body_vel_des[3:6] = 10 * np.matrix((self.body_rot_des * self.body_rot_fdb.inv()).as_rotvec()).T \
-                                 + (self.body_vel_des[3:6]) * 0
-        self.foot_vel_des = 0.005 * (plan.pf - est.pf_) + plan.vf * 0
+        self.body_vel_des[0:3] = 2 * (self.body_pos_des - self.body_pos_fdb) \
+                                 + plan.vb[0:3] * 1
+        self.body_vel_des[3:6] = 8 * np.matrix((self.body_rot_des * self.body_rot_fdb.inv()).as_rotvec()).T \
+                                 + plan.vb[3:6] * 1
+        self.foot_vel_des = 0.005 * (plan.pf - est.pf_) + plan.vf
         # WBC vel task 1: body control
-        dx = self.foot_vel_des * 1
+        dx = self.foot_vel_des
         JF = Jfoot
         JF_pinv = JF.T * np.linalg.inv(JF * JF.T)
         pin_dq = JF_pinv * dx
@@ -213,7 +216,7 @@ class Controller:
         dx = self.body_vel_des
         pin_dq = pin_dq + J2_pre_dpinv * (dx - J2 * pin_dq)
 
-        self.tor = self.ut.from_pin(pin_tor * 1 + 0.0 * (pin_dq - pin_dq_) - 0.000 * pin_dq_, 6)
+        self.tor = self.ut.from_pin(pin_tor * 1. + (pin_dq - pin_dq_) * 0.1 * 0., 6)
 
         pin.aba(model, data, pin_q_, pin_dq_, pin_tor + est.Jfoot.T * f)
         ddq_ = self.ut.from_pin(data.ddq, 6)
