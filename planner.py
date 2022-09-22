@@ -4,6 +4,8 @@ import math
 from scipy.spatial.transform import Rotation as R
 import tf.transformations as transformations
 
+import casadi as ca
+
 from utility import Utility
 
 
@@ -52,6 +54,78 @@ class SimpleBezier:
 
     def get_acceleration(self):
         return self.a
+
+
+class TrajectoryOpti:
+    def __init__(self):
+        self.dtPlan = 0.05
+        self.nLines = 2
+        # self.line_para = np.matrix(np.zeros([3, self.nLines, 6])) # 3axis nLines 6para
+        self.start_time = 0
+        self.end_time = self.nLines * self.dtPlan
+        self.start_position = np.matrix([.0] * 3).T
+        self.end_position = np.matrix([.1] * 3).T
+
+        self.opti = ca.Opti()
+
+    def setOptiProblem(self):
+        def eta(t):
+            return ca.DM([t ** 5., t ** 4., t ** 3., t ** 2., t, 1.])
+
+        def d_eta(t):
+            return ca.DM([5. * t ** 4., 4. * t ** 3., 3. * t ** 2., 2. * t, 1., 0.])
+
+        def dd_eta(t):
+            return ca.DM([20. * t ** 3., 12. * t ** 2., 6. * t, 2., 0., 0.])
+
+        dt = self.dtPlan
+        st = self.start_time
+        sp = self.start_position
+        ep = self.end_position
+
+        xa = self.opti.variable(6, 2)
+        # ya = self.opti.variable(self.nLines, 6)
+        # za = self.opti.variable(self.nLines, 6)
+
+        # Qacc = self.opti.parameter(6, 6)
+        # self.opti.set_value(Qacc, ca.DM.eye(6))
+        # Qacc = ca.DM.zeros(6, 6)
+        Qacc = ca.DM([
+            [400. / 7. * dt ** 7, 40. * dt ** 6, 24. * dt ** 5, 10. * dt ** 4, 0, 0],
+            [40. * dt ** 6, 28.8 * dt ** 5, 18. * dt ** 4, 8. * dt ** 3, 0, 0],
+            [24. * dt ** 5, 18. * dt ** 4, 12. * dt ** 3, 6. * dt ** 2, 0, 0],
+            [10. * dt ** 4, 8. * dt ** 3, 6. * dt ** 2, 4. * dt, 0, 0],
+            [0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0]
+        ])
+
+        # cost1 = ca.mtimes(xa[0, :], Qacc)
+        # cost1 = ca.mtimes(cost1, ca.reshape(xa, 6, 1))
+        cost1 = xa[:, 0].T @ Qacc @ xa[:, 0] + xa[:, 1].T @ Qacc @ xa[:, 1]
+
+        # constrain1 = eta(0).T @ xa[:, 0] == sp[0]
+        # constrain2 = eta(dt).T @ xa[:, 0] - eta(0).T @ xa[:, 1] == 0
+        # constrain3 = eta(dt).T @ xa[:, 1] == ep[0]
+
+        cons = []
+        cons.append(eta(0).T @ xa[:, 0] == sp[0])
+        cons.append(eta(dt).T @ xa[:, 0] - eta(0).T @ xa[:, 1] == 0)
+        cons.append(eta(dt).T @ xa[:, 1] == ep[0])
+
+        self.opti.minimize(cost1)
+        # self.opti.subject_to(constrain1)
+        # self.opti.subject_to(constrain2)
+        # self.opti.subject_to(constrain3)
+        self.opti.subject_to(cons)
+        # self.opti.subject_to(x + y >= 1)
+
+        self.opti.solver('ipopt')
+
+        sol = self.opti.solve()
+
+        # print(sol.value(xa))
+        # print(eta(0).T @ sol.value(xa))
+        # print(eta(dt).T @ sol.value(xa))
 
 
 class Planner:
@@ -209,3 +283,8 @@ class Planner:
         self.update_body_target(rece)
         self.update_foot_target(est)
         return self.pb
+
+
+if __name__ == '__main__':
+    traj_opti = TrajectoryOpti()
+    traj_opti.setOptiProblem()
