@@ -1,5 +1,7 @@
 import numpy as np
 import math
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import axes3d
 
 from scipy.spatial.transform import Rotation as R
 import tf.transformations as transformations
@@ -59,33 +61,49 @@ class SimpleBezier:
 class TrajectoryOpti:
     def __init__(self):
         self.dtPlan = 0.05
-        self.nLines = 2
+        self.nLines = 4
         # self.line_para = np.matrix(np.zeros([3, self.nLines, 6])) # 3axis nLines 6para
+        self.line_para = [np.zeros([6, self.nLines]), np.zeros([6, self.nLines]),
+                          np.zeros([6, self.nLines])]  # 3axis nLines 6para
+        self.foot_position = np.zeros([12, self.nLines])
+        self.foot_state = np.zeros([4, self.nLines])
+        self.support_polygon = []
         self.start_time = 0
         self.end_time = self.nLines * self.dtPlan
-        self.start_position = np.matrix([.0] * 3).T
-        self.end_position = np.matrix([.1] * 3).T
+        self.start_position = np.matrix([.0, .0, .14]).T
+        self.end_position = np.matrix([.3, .0, .14]).T
+        self.start_velocity = np.matrix([.0] * 3).T
+        self.end_velocity = np.matrix([.1] * 3).T
 
         self.opti = ca.Opti()
 
+    def eta(self, t):
+        return [t ** 5., t ** 4., t ** 3., t ** 2., t, 1.]
+
+    def d_eta(self, t):
+        return [5. * t ** 4., 4. * t ** 3., 3. * t ** 2., 2. * t, 1., 0.]
+
+    def dd_eta(self, t):
+        return [20. * t ** 3., 12. * t ** 2., 6. * t, 2., 0., 0.]
+
+    def get_support_polygon(self):
+        self.support_polygon = []
+        for i in range(self.nLines):
+            # test
+            self.support_polygon.append([np.array([1., 1., 2.]), np.array([-1., -1., -5.])])
+
     def setOptiProblem(self):
-        def eta(t):
-            return ca.DM([t ** 5., t ** 4., t ** 3., t ** 2., t, 1.])
-
-        def d_eta(t):
-            return ca.DM([5. * t ** 4., 4. * t ** 3., 3. * t ** 2., 2. * t, 1., 0.])
-
-        def dd_eta(t):
-            return ca.DM([20. * t ** 3., 12. * t ** 2., 6. * t, 2., 0., 0.])
-
         dt = self.dtPlan
         st = self.start_time
         sp = self.start_position
         ep = self.end_position
+        sv = self.start_velocity
+        ev = self.end_velocity
 
-        xa = self.opti.variable(6, 2)
-        # ya = self.opti.variable(self.nLines, 6)
-        # za = self.opti.variable(self.nLines, 6)
+        # xa = self.opti.variable(6, self.nLines)
+        # ya = self.opti.variable(6, self.nLines)
+        # za = self.opti.variable(6, self.nLines)
+        a = [self.opti.variable(6, self.nLines), self.opti.variable(6, self.nLines), self.opti.variable(6, self.nLines)]
 
         # Qacc = self.opti.parameter(6, 6)
         # self.opti.set_value(Qacc, ca.DM.eye(6))
@@ -101,31 +119,84 @@ class TrajectoryOpti:
 
         # cost1 = ca.mtimes(xa[0, :], Qacc)
         # cost1 = ca.mtimes(cost1, ca.reshape(xa, 6, 1))
-        cost1 = xa[:, 0].T @ Qacc @ xa[:, 0] + xa[:, 1].T @ Qacc @ xa[:, 1]
+        # cost1 = xa[:, 0].T @ Qacc @ xa[:, 0] + xa[:, 1].T @ Qacc @ xa[:, 1]
 
         # constrain1 = eta(0).T @ xa[:, 0] == sp[0]
         # constrain2 = eta(dt).T @ xa[:, 0] - eta(0).T @ xa[:, 1] == 0
         # constrain3 = eta(dt).T @ xa[:, 1] == ep[0]
 
-        cons = []
-        cons.append(eta(0).T @ xa[:, 0] == sp[0])
-        cons.append(eta(dt).T @ xa[:, 0] - eta(0).T @ xa[:, 1] == 0)
-        cons.append(eta(dt).T @ xa[:, 1] == ep[0])
+        cost = 0
+        constr_p = []
+        constr_v = []
+        constr_zmp = []
+        self.get_support_polygon()
+        for i in range(self.nLines):
+            for axis in range(3):
+                # cost: acc
+                cost = cost + a[axis][:, i].T @ Qacc @ a[axis][:, i]
+                # constrain: smooth
+                if i == 0:
+                    constr_p.append(ca.DM(self.eta(0)).T @ a[axis][:, i] == sp[axis])
+                    constr_v.append(ca.DM(self.d_eta(0)).T @ a[axis][:, i] == sv[axis])
+                else:
+                    constr_p.append(
+                        ca.DM(self.eta(dt)).T @ a[axis][:, i - 1] - ca.DM(self.eta(0)).T @ a[axis][:, i] == 0)
+                    constr_v.append(
+                        ca.DM(self.d_eta(dt)).T @ a[axis][:, i - 1] - ca.DM(self.d_eta(0)).T @ a[axis][:, i] == 0)
+                    if i == self.nLines - 1:
+                        constr_p.append(ca.DM(self.eta(dt)).T @ a[axis][:, i] == ep[axis])
+                        constr_v.append(ca.DM(self.d_eta(dt)).T @ a[axis][:, i] == ev[axis])
+            # constrain: zmp
+            for sp in self.support_polygon[i]:
+                g = 9.8
+                p0 = [ca.DM(self.eta(0)).T @ a[axis][:, i] for axis in range(3)]
+                p1 = [ca.DM(self.eta(dt)).T @ a[axis][:, i] for axis in range(3)]
+                ddp0 = [ca.DM(self.dd_eta(0)).T @ a[axis][:, i] for axis in range(3)]
+                ddp1 = [ca.DM(self.dd_eta(dt)).T @ a[axis][:, i] for axis in range(3)]
+                constr_zmp.append(sp[0] * ddp0[0] * p0[2] + sp[1] * ddp0[1] * p0[2] + sp[2] * (ddp0[2] + g) >= 0)
+                constr_zmp.append(sp[0] * ddp1[0] * p1[2] + sp[1] * ddp1[1] * p1[2] + sp[2] * (ddp1[2] + g) >= 0)
 
-        self.opti.minimize(cost1)
+        self.opti.minimize(cost)
         # self.opti.subject_to(constrain1)
         # self.opti.subject_to(constrain2)
         # self.opti.subject_to(constrain3)
-        self.opti.subject_to(cons)
-        # self.opti.subject_to(x + y >= 1)
+        self.opti.subject_to(constr_p)
+        self.opti.subject_to(constr_v)
+        self.opti.subject_to(constr_zmp)
 
         self.opti.solver('ipopt')
 
         sol = self.opti.solve()
 
-        # print(sol.value(xa))
-        # print(eta(0).T @ sol.value(xa))
-        # print(eta(dt).T @ sol.value(xa))
+        self.line_para = [sol.value(a[axis]) for axis in range(3)]
+
+        print(sol.value(a[0]))
+        print(ca.DM(self.eta(0)).T @ sol.value(a[0]))
+        print(ca.DM(self.eta(dt)).T @ sol.value(a[0]))
+        # print(d_eta(0).T @ sol.value(xa))
+        # print(d_eta(dt).T @ sol.value(xa))
+
+    def plot_lines(self):
+        p = []
+        for i in range(self.nLines):
+            for t in range(100):
+                p.append(
+                    [(np.matrix(self.eta(t / 100. * self.dtPlan)) * np.matrix(self.line_para[axis][:, i]).T)[0, 0]
+                     for axis in range(3)]
+                )
+        x = [e[0] for e in p]
+        y = [e[1] for e in p]
+        z = [e[2] for e in p]
+        fig = plt.figure(1)
+        plt.plot(np.array(x))
+        plt.xlabel('t Axes')
+        fig = plt.figure(2)
+        ax = plt.axes(projection="3d")
+        ax.plot3D(np.array(x), np.array(y), np.array(z))
+        ax.set_xlabel('X Axes')
+        ax.set_ylabel('Y Axes')
+        ax.set_zlabel('Z Axes')
+        plt.show()
 
 
 class Planner:
@@ -288,3 +359,4 @@ class Planner:
 if __name__ == '__main__':
     traj_opti = TrajectoryOpti()
     traj_opti.setOptiProblem()
+    traj_opti.plot_lines()
