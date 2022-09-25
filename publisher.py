@@ -17,17 +17,13 @@ class RosPublish:
         # msg publish
         # publish path
         self.path_buffer_length = 80
-        self.rf_foot_path = nmsg.Path()
-        self.lf_foot_path = nmsg.Path()
-        self.rh_foot_path = nmsg.Path()
-        self.lh_foot_path = nmsg.Path()
-        self.foot_path = [self.rf_foot_path, self.lf_foot_path, self.rh_foot_path, self.lh_foot_path]
-        self.rf_foot_path_pub = rospy.Publisher('rf_foot_trajectory', nmsg.Path, queue_size=10)
-        self.lf_foot_path_pub = rospy.Publisher('lf_foot_trajectory', nmsg.Path, queue_size=10)
-        self.rh_foot_path_pub = rospy.Publisher('rh_foot_trajectory', nmsg.Path, queue_size=10)
-        self.lh_foot_path_pub = rospy.Publisher('lh_foot_trajectory', nmsg.Path, queue_size=10)
-        self.foot_path_pub = [self.rf_foot_path_pub, self.lf_foot_path_pub, self.rh_foot_path_pub,
-                              self.lh_foot_path_pub]
+        self.body_path = nmsg.Path()
+        self.foot_path = [nmsg.Path(), nmsg.Path(), nmsg.Path(), nmsg.Path()]
+        self.body_path_pub = rospy.Publisher('body_trajectory', nmsg.Path, queue_size=10)
+        self.foot_path_pub = [rospy.Publisher('rf_foot_trajectory', nmsg.Path, queue_size=10),
+                              rospy.Publisher('lf_foot_trajectory', nmsg.Path, queue_size=10),
+                              rospy.Publisher('rh_foot_trajectory', nmsg.Path, queue_size=10),
+                              rospy.Publisher('lh_foot_trajectory', nmsg.Path, queue_size=10)]
 
         # publish point
         self.foot_point = [gmsg.PointStamped(), gmsg.PointStamped(), gmsg.PointStamped(), gmsg.PointStamped()]
@@ -164,6 +160,30 @@ class RosPublish:
 
         pf = self.ut.m2l(plan.pf)
 
+        def pub_body_path(plan):
+            self.body_path.header.frame_id = "world"
+            self.body_path.header.stamp = rospy.Time.now()
+
+            # for p in plan.
+            self.body_path.poses.clear()
+            pb_sequence = plan.traj_opti.position
+            for pb in pb_sequence:
+                pose = gmsg.PoseStamped()
+                pose.header.frame_id = 'world'
+                pose.header.stamp = rospy.Time.now()
+                pose.pose.position.x = pb[0]
+                pose.pose.position.y = pb[1]
+                pose.pose.position.z = pb[2]
+                quaternion = quaternion_from_euler(
+                    0, 0, 0)
+                pose.pose.orientation.x = quaternion[0]
+                pose.pose.orientation.y = quaternion[1]
+                pose.pose.orientation.z = quaternion[2]
+                pose.pose.orientation.w = quaternion[3]
+                self.body_path.poses.append(pose)
+
+            self.body_path_pub.publish(self.body_path)
+
         def pub_foot_path(leg_id):
             self.foot_path[leg_id].header.frame_id = "world"
             self.foot_path[leg_id].header.stamp = rospy.Time.now()
@@ -197,6 +217,7 @@ class RosPublish:
 
             self.foot_path_pub[leg_id].publish(self.foot_path[leg_id])
 
+        pub_body_path(plan)
         pub_foot_path(0)
         pub_foot_path(1)
         pub_foot_path(2)
