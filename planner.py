@@ -63,17 +63,19 @@ class TrajectoryOpti:
         self.dtPlan = 0.05
         self.nLines = 4
         # self.line_para = np.matrix(np.zeros([3, self.nLines, 6])) # 3axis nLines 6para
-        self.line_para = [np.zeros([6, self.nLines]), np.zeros([6, self.nLines]),
-                          np.zeros([6, self.nLines])]  # 3axis nLines 6para
-        self.foot_position = np.zeros([12, self.nLines])
-        self.foot_state = np.zeros([4, self.nLines])
-        self.support_polygon = []
+        self.para_sequence = [np.zeros([6, 3])] * self.nLines  # 3axis nLines 6para
+        self.position_sequence = [np.zeros([12, 0])] * self.nLines
+        self.contact_sequence = [np.zeros([4, 0])] * self.nLines
+        self.polygon_sequence = [] * self.nLines
+        self.polygon_radius = 0.04
         self.start_time = 0
         self.end_time = self.nLines * self.dtPlan
         self.start_position = np.matrix([.0, .0, .14]).T
         self.end_position = np.matrix([.3, .0, .14]).T
         self.start_velocity = np.matrix([.0] * 3).T
         self.end_velocity = np.matrix([.1] * 3).T
+
+        self.position = []
 
         self.opti = ca.Opti()
 
@@ -86,13 +88,30 @@ class TrajectoryOpti:
     def dd_eta(self, t):
         return [20. * t ** 3., 12. * t ** 2., 6. * t, 2., 0., 0.]
 
-    def get_support_polygon(self):
-        self.support_polygon = []
+    def update_polygon_sequence(self):
+        self.polygon_sequence = []
         for i in range(self.nLines):
             # test
-            self.support_polygon.append([np.array([1., 1., 2.]), np.array([-1., -1., -5.])])
+            # self.support_polygon.append([np.array([1., 1., 2.]), np.array([-1., -1., -5.])])
 
-    def setOptiProblem(self):
+            support_point = []
+            for leg in range(4):
+                if self.contact_sequence[i][leg] == 1:
+                    support_point.append(self.position_sequence[i][leg * 3 + 0:leg * 3 + 3])
+            sp_sub = []
+            if len(support_point) == 2:
+                x1 = support_point[0][0]
+                y1 = support_point[0][1]
+                x2 = support_point[1][0]
+                y2 = support_point[1][1]
+                sp_sub.append(np.array([y2 - y1, x1 - x2, y1 * x2 - y2 * x1 - self.polygon_radius]))
+                sp_sub.append(np.array([-(y2 - y1), -(x1 - x2), -(y1 * x2 - y2 * x1 + self.polygon_radius)]))
+            self.polygon_sequence.append(sp_sub)
+
+    def step(self, herizon, ploy_seq):
+        self.nLines = herizon
+        self.para_sequence = [np.zeros([6, 3])] * self.nLines  # 3axis nLines 6para
+
         dt = self.dtPlan
         st = self.start_time
         sp = self.start_position
@@ -103,7 +122,8 @@ class TrajectoryOpti:
         # xa = self.opti.variable(6, self.nLines)
         # ya = self.opti.variable(6, self.nLines)
         # za = self.opti.variable(6, self.nLines)
-        a = [self.opti.variable(6, self.nLines), self.opti.variable(6, self.nLines), self.opti.variable(6, self.nLines)]
+        # a = [self.opti.variable(6, 3)] * self.nLines
+        a = [self.opti.variable(6, 3) for i in range(self.nLines)]
 
         # Qacc = self.opti.parameter(6, 6)
         # self.opti.set_value(Qacc, ca.DM.eye(6))
@@ -129,30 +149,29 @@ class TrajectoryOpti:
         constr_p = []
         constr_v = []
         constr_zmp = []
-        self.get_support_polygon()
         for i in range(self.nLines):
             for axis in range(3):
                 # cost: acc
-                cost = cost + a[axis][:, i].T @ Qacc @ a[axis][:, i]
+                cost = cost + a[i][:, axis].T @ Qacc @ a[i][:, axis]
                 # constrain: smooth
                 if i == 0:
-                    constr_p.append(ca.DM(self.eta(0)).T @ a[axis][:, i] == sp[axis])
-                    constr_v.append(ca.DM(self.d_eta(0)).T @ a[axis][:, i] == sv[axis])
+                    constr_p.append(ca.DM(self.eta(0)).T @ a[i][:, axis] == sp[axis])
+                    constr_v.append(ca.DM(self.d_eta(0)).T @ a[i][:, axis] == sv[axis])
                 else:
                     constr_p.append(
-                        ca.DM(self.eta(dt)).T @ a[axis][:, i - 1] - ca.DM(self.eta(0)).T @ a[axis][:, i] == 0)
+                        ca.DM(self.eta(dt)).T @ a[i - 1][:, axis] - ca.DM(self.eta(0)).T @ a[i][:, axis] == 0)
                     constr_v.append(
-                        ca.DM(self.d_eta(dt)).T @ a[axis][:, i - 1] - ca.DM(self.d_eta(0)).T @ a[axis][:, i] == 0)
+                        ca.DM(self.d_eta(dt)).T @ a[i - 1][:, axis] - ca.DM(self.d_eta(0)).T @ a[i][:, axis] == 0)
                     if i == self.nLines - 1:
-                        constr_p.append(ca.DM(self.eta(dt)).T @ a[axis][:, i] == ep[axis])
-                        constr_v.append(ca.DM(self.d_eta(dt)).T @ a[axis][:, i] == ev[axis])
+                        constr_p.append(ca.DM(self.eta(dt)).T @ a[i][:, axis] == ep[axis])
+                        constr_v.append(ca.DM(self.d_eta(dt)).T @ a[i][:, axis] == ev[axis])
             # constrain: zmp
-            for sp in self.support_polygon[i]:
+            for sp in ploy_seq[i]:
                 g = 9.8
-                p0 = [ca.DM(self.eta(0)).T @ a[axis][:, i] for axis in range(3)]
-                p1 = [ca.DM(self.eta(dt)).T @ a[axis][:, i] for axis in range(3)]
-                ddp0 = [ca.DM(self.dd_eta(0)).T @ a[axis][:, i] for axis in range(3)]
-                ddp1 = [ca.DM(self.dd_eta(dt)).T @ a[axis][:, i] for axis in range(3)]
+                p0 = [ca.DM(self.eta(0)).T @ a[i][:, axis] for axis in range(3)]
+                p1 = [ca.DM(self.eta(dt)).T @ a[i][:, axis] for axis in range(3)]
+                ddp0 = [ca.DM(self.dd_eta(0)).T @ a[i][:, axis] for axis in range(3)]
+                ddp1 = [ca.DM(self.dd_eta(dt)).T @ a[i][:, axis] for axis in range(3)]
                 constr_zmp.append(sp[0] * ddp0[0] * p0[2] + sp[1] * ddp0[1] * p0[2] + sp[2] * (ddp0[2] + g) >= 0)
                 constr_zmp.append(sp[0] * ddp1[0] * p1[2] + sp[1] * ddp1[1] * p1[2] + sp[2] * (ddp1[2] + g) >= 0)
 
@@ -168,25 +187,27 @@ class TrajectoryOpti:
 
         sol = self.opti.solve()
 
-        self.line_para = [sol.value(a[axis]) for axis in range(3)]
+        self.para_sequence = [sol.value(a[i]) for i in range(self.nLines)]
 
-        print(sol.value(a[0]))
-        print(ca.DM(self.eta(0)).T @ sol.value(a[0]))
-        print(ca.DM(self.eta(dt)).T @ sol.value(a[0]))
+        # print(sol.value(a[0]))
+        # print(ca.DM(self.eta(0)).T @ sol.value(a[0]))
+        # print(ca.DM(self.eta(dt)).T @ sol.value(a[0]))
         # print(d_eta(0).T @ sol.value(xa))
         # print(d_eta(dt).T @ sol.value(xa))
 
-    def plot_lines(self):
-        p = []
+    def update_position(self):
+        self.position = []
         for i in range(self.nLines):
             for t in range(100):
-                p.append(
-                    [(np.matrix(self.eta(t / 100. * self.dtPlan)) * np.matrix(self.line_para[axis][:, i]).T)[0, 0]
+                self.position.append(
+                    [(np.matrix(self.eta(t / 100. * self.dtPlan)) * np.matrix(self.para_sequence[i][:, axis]).T)[0, 0]
                      for axis in range(3)]
                 )
-        x = [e[0] for e in p]
-        y = [e[1] for e in p]
-        z = [e[2] for e in p]
+
+    def plot_lines(self):
+        x = [e[0] for e in self.position]
+        y = [e[1] for e in self.position]
+        z = [e[2] for e in self.position]
         fig = plt.figure(1)
         plt.plot(np.array(x))
         plt.xlabel('t Axes')
@@ -225,16 +246,44 @@ class Planner:
         self.ph_body = np.matrix([0.0915, -0.08, .0, 0.0915, 0.08, .0, -0.0915, -0.08, .0, -0.0915, 0.08, .0]).T
         self.pb = np.matrix([.0, .0, 0.14, 0., 0., 0., 1.]).T
         self.vb = np.matrix([.0] * 6).T
+        self.foot_sequence = []
+        self.polygon_sequence = []
+        self.polygon_radius = 0.02
         self.model = model
         self.data = self.model.createData()
 
         self.stand_height = 0.14
 
+        self.plan_time_start = 0.
+        self.body_traj_para_sequence = []
+        self.traj_opti = TrajectoryOpti()
+
         self.foot_trajectory = [SimpleBezier(), SimpleBezier(), SimpleBezier(), SimpleBezier()]
 
         self.ut = Utility()
 
+    def step(self, rece, est):
+        if not self.phase_abnormal:
+            self.timer = self.timer + self.dt
+        self.update_step_phase()
+        self.phase_abnormal_handle()
+        self.update_body_target(rece)
+        self.update_foot_target(est)
+        iter = round(self.timer / self.dt)
+        if (iter % self.iterPerPlan) == 0:
+            self.plan_time_start = self.timer
+            self.update_foot_sequence(est, self.horizon * self.dtPlan)
+            self.update_polygon_sequence()
+            self.traj_opti.start_position = est.pb_[0:3]
+            self.traj_opti.end_position = est.pb_[0:3] + self.vb[0:3] * self.horizon * self.dtPlan
+            self.traj_opti.step(self.horizon, self.polygon_sequence)
+            self.traj_opti.update_position()
+            # self.traj_opti.plot_lines()
+            self.body_traj_para_sequence = self.traj_opti.para_sequence
+        return self.pb
+
     def get_contact_target(self, time):
+        contact_state = np.array([0, 0, 0, 0])
         if self.gait == 'trot':
             self.segments = np.array([10, 10, 10, 10])
             self.duration = np.array([5, 5, 5, 5])
@@ -244,8 +293,8 @@ class Planner:
         iterPlan = time / self.dtPlan
         for leg in range(4):
             normIterPlan = (iterPlan + self.segments[leg] - self.offset[leg]) % self.segments[leg]
-            self.contact_state[leg] = normIterPlan < self.duration[leg]
-        return self.contact_state
+            contact_state[leg] = normIterPlan < self.duration[leg]
+        return contact_state
 
     def get_step_phase(self, time):
         if self.gait == 'trot':
@@ -346,17 +395,60 @@ class Planner:
         else:
             self.phase_abnormal = True
 
-    def step(self, rece, est):
-        if not self.phase_abnormal:
-            self.timer = self.timer + self.dt
-        self.update_step_phase()
-        self.phase_abnormal_handle()
-        self.update_body_target(rece)
-        self.update_foot_target(est)
-        return self.pb
+    def update_foot_sequence(self, est, herizon_time):
+        iterPlan = 0
+        foot_pisition = est.pf_
+        foot_position_sequence = [np.zeros([12, 1]) for i in range(self.horizon)]
+        foot_contact_sequence = [np.zeros([4, 1]) for i in range(self.horizon)]
+        while self.dtPlan * iterPlan < herizon_time:
+            contact_target = self.get_contact_target(self.timer + self.dtPlan * iterPlan)
+            foot_contact_sequence[iterPlan] = np.matrix(contact_target).T
+            for leg in range(4):
+                if contact_target[leg] == 0:
+                    foot_pisition[leg * 3 + 0] = foot_pisition[leg * 3 + 0] + self.vb[0] * self.dtPlan
+                    foot_pisition[leg * 3 + 1] = foot_pisition[leg * 3 + 1] + self.vb[1] * self.dtPlan
+            foot_position_sequence[iterPlan] = foot_pisition.copy()
+            iterPlan = iterPlan + 1
+        self.foot_sequence = [foot_contact_sequence, foot_position_sequence]
+        return [foot_contact_sequence, foot_position_sequence]
+
+    def update_polygon_sequence(self):
+        self.polygon_sequence = []
+        foot_contact_sequence = self.foot_sequence[0]
+        foot_position_sequence = self.foot_sequence[1]
+        for i in range(self.horizon):
+            # test
+            # self.polygon_sequence.append([np.array([1., 1., 2.]), np.array([-1., -1., -5.])])
+
+            support_point = []
+            for leg in range(4):
+                if foot_contact_sequence[i][leg] == 1:
+                    support_point.append(foot_position_sequence[i][leg * 3 + 0:leg * 3 + 3])
+            sp_sub = []
+            if len(support_point) == 2:
+                x1 = support_point[0][0]
+                y1 = support_point[0][1]
+                x2 = support_point[1][0]
+                y2 = support_point[1][1]
+                sp_sub.append(np.array([y2 - y1, x1 - x2, y1 * x2 - y2 * x1 - self.polygon_radius]))
+                sp_sub.append(np.array([-(y2 - y1), -(x1 - x2), -(y1 * x2 - y2 * x1 + self.polygon_radius)]))
+            else:
+                print("support polygon error!!!!!")
+            self.polygon_sequence.append(sp_sub)
 
 
 if __name__ == '__main__':
     traj_opti = TrajectoryOpti()
-    traj_opti.setOptiProblem()
+    traj_opti.nLines = 2
+    traj_opti.para_sequence = [np.zeros([6, 3])] * traj_opti.nLines  # 3axis nLines 6para
+    traj_opti.position_sequence = [np.zeros([12, 0])] * traj_opti.nLines
+    traj_opti.contact_sequence = [np.zeros([4, 0])] * traj_opti.nLines
+    # traj_opti.support_polygon = [] * self.nLines
+    traj_opti.position_sequence[0] = np.array([1, -1, 2, 1, 1, 2, -1, -1, 2, -1, 1, 2])
+    traj_opti.position_sequence[1] = np.array([1, -1, 2, 1, 1, 2, -1, -1, 2, -1, 1, 2])
+    traj_opti.contact_sequence[0] = np.array([1, 0, 0, 1])
+    traj_opti.contact_sequence[1] = np.array([1, 0, 0, 1])
+    traj_opti.update_polygon_sequence()
+    traj_opti.step(traj_opti.nLines, traj_opti.polygon_sequence)
+    traj_opti.update_position()
     traj_opti.plot_lines()
