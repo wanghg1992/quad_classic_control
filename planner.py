@@ -71,9 +71,9 @@ class TrajectoryOpti:
         self.start_time = 0
         self.end_time = self.nLines * self.dtPlan
         self.start_position = np.matrix([.0, .0, .14]).T
-        self.end_position = np.matrix([.3, .0, .14]).T
+        self.end_position = np.matrix([.0, .0, .14]).T
         self.start_velocity = np.matrix([.0] * 3).T
-        self.end_velocity = np.matrix([.1] * 3).T
+        self.end_velocity = np.matrix([.0] * 3).T
 
         self.position = []
 
@@ -108,9 +108,12 @@ class TrajectoryOpti:
                 sp_sub.append(np.array([-(y2 - y1), -(x1 - x2), -(y1 * x2 - y2 * x1 + self.polygon_radius)]))
             self.polygon_sequence.append(sp_sub)
 
-    def step(self, herizon, ploy_seq):
+    def update_opti_struct(self, herizon):
         self.nLines = herizon
         self.para_sequence = [np.zeros([6, 3])] * self.nLines  # 3axis nLines 6para
+
+    def step(self, ploy_seq):
+        self.opti = ca.Opti()
 
         dt = self.dtPlan
         st = self.start_time
@@ -185,6 +188,11 @@ class TrajectoryOpti:
 
         self.opti.solver('ipopt')
 
+        # self.opti.solver('qpoases')
+        p_opts = {"expand": True, "print_out": False, "print_time": False}
+        s_opts = {"max_iter": 50, "print_level": 0}
+        self.opti.solver('ipopt', p_opts, s_opts)
+
         sol = self.opti.solve()
 
         self.para_sequence = [sol.value(a[i]) for i in range(self.nLines)]
@@ -257,6 +265,7 @@ class Planner:
         self.plan_time_start = 0.
         self.body_traj_para_sequence = []
         self.traj_opti = TrajectoryOpti()
+        self.traj_opti.update_opti_struct(self.horizon)
 
         self.foot_trajectory = [SimpleBezier(), SimpleBezier(), SimpleBezier(), SimpleBezier()]
 
@@ -276,7 +285,7 @@ class Planner:
             self.update_polygon_sequence()
             self.traj_opti.start_position = est.pb_[0:3]
             self.traj_opti.end_position = est.pb_[0:3] + self.vb[0:3] * self.horizon * self.dtPlan
-            self.traj_opti.step(self.horizon, self.polygon_sequence)
+            self.traj_opti.step(self.polygon_sequence)
             self.traj_opti.update_position()
             # self.traj_opti.plot_lines()
             self.body_traj_para_sequence = self.traj_opti.para_sequence
