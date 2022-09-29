@@ -75,7 +75,7 @@ class TrajectoryOpti:
         self.start_velocity = np.matrix([.0] * 3).T
         self.end_velocity = np.matrix([.0] * 3).T
 
-        self.position = []
+        self.line_positions = []
 
         self.opti = ca.Opti()
 
@@ -203,19 +203,42 @@ class TrajectoryOpti:
         # print(d_eta(0).T @ sol.value(xa))
         # print(d_eta(dt).T @ sol.value(xa))
 
-    def update_position(self):
-        self.position = []
+    def get_pva(self, t):
+        time = t
+        position = []
         for i in range(self.nLines):
-            for t in range(100):
-                self.position.append(
-                    [(np.matrix(self.eta(t / 100. * self.dtPlan)) * np.matrix(self.para_sequence[i][:, axis]).T)[0, 0]
+            if time < self.dtPlan:
+                position = np.matrix(
+                    [(np.matrix(self.eta(time)) * np.matrix(self.para_sequence[i][:, axis]).T)[0, 0]
+                     for axis in range(3)]
+                ).T
+                velocity = np.matrix(
+                    [(np.matrix(self.d_eta(time)) * np.matrix(self.para_sequence[i][:, axis]).T)[0, 0]
+                     for axis in range(3)]
+                ).T
+                acceleration = np.matrix(
+                    [(np.matrix(self.dd_eta(time)) * np.matrix(self.para_sequence[i][:, axis]).T)[0, 0]
+                     for axis in range(3)]
+                ).T
+                break
+            else:
+                time = time - self.dtPlan
+        return [position, velocity, acceleration]
+
+    def update_line_positions(self):
+        self.line_positions = []
+        for i in range(self.nLines):
+            for point in range(100):
+                self.line_positions.append(
+                    [(np.matrix(self.eta(point / 100. * self.dtPlan)) * np.matrix(self.para_sequence[i][:, axis]).T)[
+                         0, 0]
                      for axis in range(3)]
                 )
 
     def plot_lines(self):
-        x = [e[0] for e in self.position]
-        y = [e[1] for e in self.position]
-        z = [e[2] for e in self.position]
+        x = [e[0] for e in self.line_positions]
+        y = [e[1] for e in self.line_positions]
+        z = [e[2] for e in self.line_positions]
         fig = plt.figure(1)
         plt.plot(np.array(x))
         plt.xlabel('t Axes')
@@ -254,6 +277,7 @@ class Planner:
         self.ph_body = np.matrix([0.0915, -0.08, .0, 0.0915, 0.08, .0, -0.0915, -0.08, .0, -0.0915, 0.08, .0]).T
         self.pb = np.matrix([.0, .0, 0.14, 0., 0., 0., 1.]).T
         self.vb = np.matrix([.0] * 6).T
+        self.vb_user = np.matrix([.0] * 6).T
         self.foot_sequence = []
         self.polygon_sequence = []
         self.polygon_radius = 0.02
@@ -266,6 +290,7 @@ class Planner:
         self.body_traj_para_sequence = []
         self.traj_opti = TrajectoryOpti()
         self.traj_opti.update_opti_struct(self.horizon)
+        self.plan_ready = False
 
         self.foot_trajectory = [SimpleBezier(), SimpleBezier(), SimpleBezier(), SimpleBezier()]
 
@@ -284,11 +309,12 @@ class Planner:
             self.update_foot_sequence(est, self.horizon * self.dtPlan)
             self.update_polygon_sequence()
             self.traj_opti.start_position = est.pb_[0:3]
-            self.traj_opti.end_position = est.pb_[0:3] + self.vb[0:3] * self.horizon * self.dtPlan
+            self.traj_opti.end_position = est.pb_[0:3] + self.vb_user[0:3] * self.horizon * self.dtPlan
             self.traj_opti.step(self.polygon_sequence)
-            self.traj_opti.update_position()
+            self.traj_opti.update_line_positions()
             # self.traj_opti.plot_lines()
             self.body_traj_para_sequence = self.traj_opti.para_sequence
+            self.plan_ready = True
         return self.pb
 
     def get_contact_target(self, time):
@@ -334,6 +360,13 @@ class Planner:
         self.pb[0:2] = self.pb[0:2] + rece.body_vel[0:2] * self.dt
         self.pb[2] = self.stand_height + rece.body_pos_offset[2]
         self.vb[0:2] = rece.body_vel[0:2]
+        self.vb_user[0:2] = rece.body_vel[0:2]
+        if self.plan_ready:
+            pva = self.traj_opti.get_pva(self.timer - self.plan_time_start)
+            self.pb[0:2] = pva[0][0:2]
+            self.vb[0:2] = pva[1][0:2]
+            # self.ab[0:3] = pva[2]
+
         return self.pb
 
     def update_foot_target(self, est):
