@@ -281,6 +281,7 @@ class Planner:
         self.foot_sequence = []
         self.polygon_sequence = []
         self.polygon_radius = 0.02
+        self.zmp = np.matrix([.0] * 3).T
         self.model = model
         self.data = self.model.createData()
 
@@ -310,6 +311,8 @@ class Planner:
             self.update_polygon_sequence()
             self.traj_opti.start_position = est.pb_[0:3]
             self.traj_opti.end_position = est.pb_[0:3] + self.vb_user[0:3] * self.horizon * self.dtPlan
+            self.traj_opti.start_velocity[0:2] = est.vb_[0:2]
+            self.traj_opti.end_velocity[0:3] = np.matrix([0., 0., 0.]).T
             self.traj_opti.step(self.polygon_sequence)
             self.traj_opti.update_line_positions()
             # self.traj_opti.plot_lines()
@@ -366,6 +369,8 @@ class Planner:
             self.pb[0:2] = pva[0][0:2]
             self.vb[0:2] = pva[1][0:2]
             # self.ab[0:3] = pva[2]
+            self.zmp[0] = (pva[2][0]*pva[0][2] + (pva[2][2] + 9.8)*pva[0][0])/(pva[2][2]+9.8)
+            self.zmp[1] = (pva[2][1]*pva[0][2] + (pva[2][2] + 9.8)*pva[0][1])/(pva[2][2]+9.8)
 
         return self.pb
 

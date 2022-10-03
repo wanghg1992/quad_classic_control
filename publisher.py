@@ -26,7 +26,11 @@ class RosPublish:
                               rospy.Publisher('lh_foot_trajectory', nmsg.Path, queue_size=10)]
 
         # publish point
+        self.body_point = gmsg.PointStamped()
+        self.zmp_point = gmsg.PointStamped()
         self.foot_point = [gmsg.PointStamped(), gmsg.PointStamped(), gmsg.PointStamped(), gmsg.PointStamped()]
+        self.body_point_pub = rospy.Publisher('body_point', gmsg.PointStamped, queue_size=10)
+        self.zmp_point_pub = rospy.Publisher('zmp_point', gmsg.PointStamped, queue_size=10)
         self.foot_point_pub = [rospy.Publisher('rf_foot_point', gmsg.PointStamped, queue_size=10),
                                rospy.Publisher('lf_foot_point', gmsg.PointStamped, queue_size=10),
                                rospy.Publisher('rh_foot_point', gmsg.PointStamped, queue_size=10),
@@ -166,7 +170,7 @@ class RosPublish:
 
             # for p in plan.
             self.body_path.poses.clear()
-            pb_sequence = plan.traj_opti.position
+            pb_sequence = plan.traj_opti.line_positions
             for pb in pb_sequence:
                 pose = gmsg.PoseStamped()
                 pose.header.frame_id = 'world'
@@ -225,7 +229,21 @@ class RosPublish:
 
     def pub_point(self, est, plan):
 
-        pf_init = self.ut.m2l(plan.pf_init)
+        def pub_body_point():
+            self.body_point.header.frame_id = 'world'
+            self.body_point.header.stamp = rospy.Time.now()
+            self.body_point.point.x = est.pb_[0]
+            self.body_point.point.y = est.pb_[1]
+            self.body_point.point.z = est.pb_[2]
+            self.body_point_pub.publish(self.body_point)
+
+        def pub_zmp_point():
+            self.zmp_point.header.frame_id = 'world'
+            self.zmp_point.header.stamp = rospy.Time.now()
+            self.zmp_point.point.x = plan.zmp[0]
+            self.zmp_point.point.y = plan.zmp[1]
+            self.zmp_point.point.z = 0
+            self.zmp_point_pub.publish(self.zmp_point)
 
         def pub_foot_point(leg_id):
             self.foot_point[leg_id].header.frame_id = 'world'
@@ -241,6 +259,9 @@ class RosPublish:
             # self.foot_point[leg_id].point.z = plan.pf_hold[leg_id*3 + 2]
             self.foot_point_pub[leg_id].publish(self.foot_point[leg_id])
 
+        pf_init = self.ut.m2l(plan.pf_init)
+        pub_body_point()
+        pub_zmp_point()
         pub_foot_point(0)
         pub_foot_point(1)
         pub_foot_point(2)
