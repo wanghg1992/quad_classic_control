@@ -9,7 +9,8 @@ import gym
 from gym import error, spaces, utils
 from gym.utils import seeding
 import pybullet as p
-import pybullet_data
+
+import robot_description
 
 from utility import Utility
 from estimator import Estimator
@@ -25,13 +26,16 @@ class CommonParameter:
 
 
 if __name__ == '__main__':
-    id = "gym_env:Quadruped-v0"
+    id = "gym_quad_env:Quadruped-v0"
     env = gym.make(id)
     env.sim_step_time = 0.002
 
     ## quadruped model
     root = pin.JointModelFreeFlyer()
-    model = pin.buildModelFromUrdf(pybullet_data.getDataPath() + '/urdf/quadruped_robot/quadruped_robot.urdf',
+
+    robot_urdf_path = robot_description.getDataPath()
+
+    model = pin.buildModelFromUrdf(robot_urdf_path + '/urdf/quadruped_robot/quadruped_robot.urdf',
                                    root)
     # model = pin.buildModelFromUrdf(pybullet_data.getDataPath()+'/urdf/quadruped_robot/quadruped_robot.urdf')
 
@@ -52,7 +56,7 @@ if __name__ == '__main__':
         torque = list(control.tor[6 + 3:6 + 6, 0]) + list(control.tor[6 + 0:6 + 3, 0]) + list(
             control.tor[6 + 9:6 + 12, 0]) \
                  + list(control.tor[6 + 6:6 + 9, 0])
-        [o_, pb_, vb_, js_, fs_] = env.step_torque(torque)
+        [o_, pb_, vb_, js_, fs_] = env.step_joint_torque(torque)
         # js_ = list(js_[0:3]) + list(js_[6:9]) + list(js_[3:6]) + list(js_[9:12])
         js_ = list(js_[3:6]) + list(js_[0:3]) + list(js_[9:12]) + list(js_[6:9])
         fs_[0] = list(fs_[0][1][0:3]) + list(fs_[0][0][0:3]) + list(fs_[0][3][0:3]) + list(fs_[0][2][0:3])

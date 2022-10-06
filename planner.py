@@ -257,7 +257,7 @@ class Planner:
         self.dt = common_para.dt
         self.iterPerPlan = 10
         self.dtPlan = self.iterPerPlan * self.dt
-        self.horizon = 200
+        self.horizon = 3
         self.gait = 'trot'
         self.segments = np.array([0, 0, 0, 0])
         self.duration = np.array([0, 0, 0, 0])
@@ -486,16 +486,20 @@ class Planner:
 
 if __name__ == '__main__':
     traj_opti = TrajectoryOpti()
-    traj_opti.nLines = 2
+    traj_opti.nLines = 3
     traj_opti.para_sequence = [np.zeros([6, 3])] * traj_opti.nLines  # 3axis nLines 6para
     traj_opti.position_sequence = [np.zeros([12, 0])] * traj_opti.nLines
     traj_opti.contact_sequence = [np.zeros([4, 0])] * traj_opti.nLines
     # traj_opti.support_polygon = [] * self.nLines
     traj_opti.position_sequence[0] = np.array([1, -1, 2, 1, 1, 2, -1, -1, 2, -1, 1, 2])
     traj_opti.position_sequence[1] = np.array([1, -1, 2, 1, 1, 2, -1, -1, 2, -1, 1, 2])
+    traj_opti.position_sequence[2] = np.array([1, -1, 2, 1, 1, 2, -1, -1, 2, -1, 1, 2])
     traj_opti.contact_sequence[0] = np.array([1, 0, 0, 1])
     traj_opti.contact_sequence[1] = np.array([1, 0, 0, 1])
-    traj_opti.update_polygon_sequence()
-    traj_opti.step(traj_opti.nLines, traj_opti.polygon_sequence)
-    traj_opti.update_position()
-    traj_opti.plot_lines()
+    traj_opti.contact_sequence[2] = np.array([1, 0, 0, 1])
+    for i in range(100):
+        traj_opti.update_polygon_sequence()
+        traj_opti.update_opti_struct(traj_opti.nLines)
+        traj_opti.step(traj_opti.polygon_sequence)
+        traj_opti.update_position()
+        # traj_opti.plot_lines()
