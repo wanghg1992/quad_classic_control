@@ -47,7 +47,7 @@ if __name__ == '__main__':
     rece = Receiver()
     est = Estimator(model, cp)
     plan = Planner(model, cp)
-    control = Controller(model)
+    control = Controller(model, est)
     rospub = RosPublish(model)
 
     for i in range(100000):

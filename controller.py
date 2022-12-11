@@ -7,8 +7,174 @@ import casadi as ca
 from utility import Utility
 
 
+class Task:
+    def __init__(self, A, b, D, f, wb, wf):
+        self.A = A
+        self.b = b
+        self.D = D
+        self.f = f
+        self.wb = wb
+        self.wf = wf
+
+    def __add__(self, other):
+        A = np.concatenate((self.A, other.A), axis=0)
+        b = np.concatenate((self.b, other.b), axis=0)
+        D = np.concatenate((self.D, other.D), axis=0)
+        f = np.concatenate((self.f, other.f), axis=0)
+        wb = np.concatenate((self.wb, other.wb), axis=0)
+        wf = np.concatenate((self.wf, other.wf), axis=0)
+        return Task(A, b, D, f, wb, wf)
+
+
+class NspWbc:
+    def __init__(self, task, priority_task=None):
+
+        if priority_task is None:
+            x_im1_pre = np.matrix(np.zeros([task.A.shape[1], 1]))
+            N_im1_pre = np.matrix(np.eye(task.A.shape[1]))
+            C_im1_pre = None
+            D_im1_pre = np.matrix([[]] * task.A.shape[1]).T
+            f_im1_pre = np.matrix([]).T
+            wb_im1_pre = np.matrix([]).T
+            wf_im1_pre = np.matrix([]).T
+        else:
+            x_im1_pre = priority_task.x_i_pre
+            N_im1_pre = priority_task.N_i_pre
+            C_im1_pre = priority_task.C_i_pre
+            wb_im1_pre = priority_task.wb_i_pre
+            D_im1_pre = priority_task.D_i_pre
+            f_im1_pre = priority_task.f_i_pre
+            wf_im1_pre = priority_task.wf_i_pre
+
+        self.A_i_pre = task.A * N_im1_pre
+        self.A_i_pre_dpinv = self.weighted_pseudo_inverse(self.A_i_pre)  # to-do: add dynamic consistent
+        self.N_i_im1 = np.matrix(np.eye(task.A.shape[1])) - self.A_i_pre_dpinv * self.A_i_pre
+        self.N_i_pre = N_im1_pre * self.N_i_im1
+
+        self.x_i_pre = x_im1_pre + self.A_i_pre_dpinv * (task.b - task.A * x_im1_pre)
+        if C_im1_pre is None:
+            self.C_i_pre = self.A_i_pre_dpinv
+        else:
+            self.C_i_pre = np.concatenate((self.N_i_im1 * C_im1_pre, self.A_i_pre_dpinv), axis=1)
+
+        self.wb_i_pre = np.concatenate((wb_im1_pre, task.wb), axis=0)
+
+        self.D_i_pre = np.concatenate((D_im1_pre, task.D), axis=0)
+        self.f_i_pre = np.concatenate((f_im1_pre, task.f), axis=0)
+        self.wf_i_pre = np.concatenate((wf_im1_pre, task.wf), axis=0)
+
+        self.solution = None
+
+    def weighted_pseudo_inverse(self, matrix, weight=None):
+        if weight is None:
+            weight = np.matrix(np.eye(matrix.shape[1]))
+        return np.linalg.inv(weight) * matrix.T * np.linalg.pinv(matrix * np.linalg.inv(weight) * matrix.T)
+
+    def get_solution(self):
+        w = np.concatenate((self.wb_i_pre, self.wf_i_pre), axis=0)
+
+        qp_H = ca.DM(np.diag(w.A[:, 0]))
+        qp_g = ca.DM(np.zeros((w.shape[0], 1)))
+        qp_A = ca.DM(np.zeros((self.D_i_pre.shape[0], w.shape[0])))
+        qp_A[:, 0:self.wb_i_pre.shape[0]] = self.D_i_pre * self.C_i_pre
+        qp_A[:, self.wb_i_pre.shape[0]:] = -np.eye(self.wf_i_pre.shape[0])
+
+        qp_uba = self.f_i_pre - self.D_i_pre * self.x_i_pre
+
+        qp = {'h': qp_H.sparsity(), 'a': qp_A.sparsity()}
+        # opts = {'printLevel': 'none'}
+        opts = {'error_on_fail': False, 'max_schur': 100, 'printLevel': 'none'}
+        S = ca.conic('S', 'qpoases', qp, opts)
+        r = S(h=qp_H, g=qp_g, a=qp_A, uba=qp_uba)
+        x_opt = r['x']
+        self.solution = self.x_i_pre + self.C_i_pre * np.matrix(x_opt)[0:self.wb_i_pre.size, 0]
+        # print('x_opt:', x_opt)
+
+
+class Wbc:
+    def __init__(self, est):
+        self.est = est
+        self.ut = Utility()
+        self.decision_variable_num = 18 + 12 + 12
+        self.tasks = list([])
+        self.nsp_wbc = None
+
+    def formulate_foot_acc_task(self, foot_acc_des):
+        A = np.matrix(np.zeros([12, self.decision_variable_num]))
+        A[0:12, 0:18] = self.est.Jfoot
+        b = foot_acc_des - self.est.Jdfoot * self.ut.to_pin(self.est.dq_, 6)
+        wb = np.matrix([1] * 12).T
+        D = np.matrix([[]] * self.decision_variable_num).T
+        f = np.matrix([]).T
+        wf = np.matrix([]).T
+
+        self.foot_acc_task = Task(A, b, D, f, wb, wf)
+        return self.foot_acc_task
+
+    def formulate_body_acc_task(self, body_acc_des):
+        A = np.matrix(np.zeros([6, self.decision_variable_num]))
+        A[0:6, 0:18] = self.est.JB
+        b = body_acc_des - self.est.JdB * self.ut.to_pin(self.est.dq_, 6)
+        wb = np.matrix([1] * 6).T
+        D = np.matrix([[]] * self.decision_variable_num).T
+        f = np.matrix([]).T
+        wf = np.matrix([]).T
+        self.body_acc_task = Task(A, b, D, f, wb, wf)
+        return self.body_acc_task
+
+    def formulate_eom_task(self):
+        S = np.matrix(np.zeros((18, 12)))
+        S[6:18, :] = np.eye(12)
+        A = np.matrix(np.zeros([18, self.decision_variable_num]))
+        A[0:18, 0:18] = self.est.M
+        A[0:18, 18:30] = -S
+        A[0:18, 30:42] = -self.est.Jfoot.T
+        b = -self.est.nle
+        wb = np.matrix([1] * 18).T
+        D = np.matrix([[]] * self.decision_variable_num).T
+        f = np.matrix([]).T
+        wf = np.matrix([]).T
+        self.eom_task = Task(A, b, D, f, wb, wf)
+        return self.eom_task
+
+    def formulate_swing_force_task(self, contact_state):
+        S = np.matrix(np.zeros((12, 12)))
+        for foot in range(4):
+            if contact_state[foot] == 0:
+                S[foot * 3 + 0:foot * 3 + 3, foot * 3 + 0:foot * 3 + 3] = np.eye(3)
+        A = np.matrix(np.zeros([12, self.decision_variable_num]))
+        A[0:12, 30:42] = S * np.eye(12)
+        b = S * np.matrix(np.zeros([12, 1]))
+        wb = np.matrix([1] * 12).T
+        D = np.matrix([[]] * self.decision_variable_num).T
+        f = np.matrix([]).T
+        wf = np.matrix([]).T
+        self.swing_force_task = Task(A, b, D, f, wb, wf)
+        return self.swing_force_task
+
+    def step(self, control_object, wbc_type):
+        self.tasks = list([])
+        self.tasks.append(self.formulate_eom_task())
+        self.tasks.append(self.formulate_foot_acc_task(control_object.foot_acc_des))
+        self.tasks.append(self.formulate_swing_force_task(control_object.contact_state))
+        self.tasks.append(self.formulate_body_acc_task(control_object.body_acc_des))
+        if wbc_type is 'NspWbc':
+            self.nsp_wbc = None
+            for task in self.tasks:
+                self.nsp_wbc = NspWbc(task, self.nsp_wbc)
+            self.nsp_wbc.get_solution()
+
+
+class ControlObject:
+    def __init__(self):
+        self.body_acc_des = None
+        self.foot_acc_des = None
+        self.contact_force_des = None
+        self.contact_state = None
+
+
 class Controller:
-    def __init__(self, model):
+    def __init__(self, model, est):
         self.tor = np.matrix([.0] * 18).T
         self.body_pos_des = np.matrix([.0, .0, 0.16])
         self.body_rot_des = R.from_matrix([[1., .0, .0], [.0, 1., .0], [0., 0., 1.]])
@@ -18,6 +184,8 @@ class Controller:
         self.model = model
         self.data = self.model.createData()
         self.ut = Utility()
+        self.control_object = ControlObject()
+        self.wbc = Wbc(est)
 
     def step_high_slope(self, p, o):
         kp = np.array([100.] * 6)
@@ -49,15 +217,6 @@ class Controller:
         return action
 
     def optimal_control(self, est, plan):
-        pin_q_ = self.ut.to_pin(est.q_, 7)
-        pin_dq_ = self.ut.to_pin(est.dq_, 6)
-        JB = est.JB
-        Jfoot = est.Jfoot
-        JdB = est.JdB
-        Jdfoot = est.Jdfoot
-        model = self.model
-        data = self.data
-
         self.body_pos_des = plan.pb[0:3].copy()
         self.body_rot_des = R.from_quat(self.ut.m2l(plan.pb[3:7]))
         self.body_pos_fdb = est.pb_[0:3].copy()
@@ -85,142 +244,13 @@ class Controller:
         self.foot_acc_des = np.diag(foot_kp) * (plan.pf - est.pf_) + np.diag(foot_kd) * (plan.vf - est.vf_) + \
                             plan.af
 
-        # WBC task 1: contact foot not slip
-        pin.crba(model, data, pin_q_)
-        M = np.matrix(data.M)
-        # ddx = np.zeros(12).reshape(12, 1)
-        ddx = self.foot_acc_des
-        JF = Jfoot
-        JF_pinv = np.linalg.inv(M) * JF.T * np.linalg.inv(JF * np.linalg.inv(M) * JF.T)
-        pin_ddq = JF_pinv * (ddx - Jdfoot * pin_dq_)
-        N1 = np.eye(18) - JF_pinv * JF
+        self.control_object.body_acc_des = self.body_acc_des
+        self.control_object.foot_acc_des = self.foot_acc_des
+        self.control_object.contact_state = plan.contact_phase
 
-        # WBC task 2: body control
-        JB_pinv = np.linalg.inv(M) * JB.T * np.linalg.inv(JB * np.linalg.inv(M) * JB.T)
-        # N1 = np.eye(18) - JB_pinv*JB
-        J2 = JB
-        Jd2 = JdB
-        J2_pre = J2 * N1
-        J2_pre_dpinv = np.linalg.inv(M) * J2_pre.T * np.linalg.inv(J2_pre * np.linalg.inv(M) * J2_pre.T)
-        ddx = self.body_acc_des
-        pin_ddq = pin_ddq + J2_pre_dpinv * (ddx - Jd2 * pin_dq_ - J2 * pin_ddq)
-
-        # floating base dynamics
-        pin.forwardKinematics(model, data, pin_q_, pin_dq_, pin_ddq)
-        a = pin.getFrameAcceleration(model, data, model.getFrameId('LFFoot_link'), pin.LOCAL_WORLD_ALIGNED)
-        # a = pin.getFrameAcceleration(model, data,model.getFrameId('LFFoot_link'), pin.LOCAL)
-        # print("a LFFoot: ", a)
-        a = pin.getFrameAcceleration(model, data, model.getFrameId('body_link'), pin.LOCAL_WORLD_ALIGNED)
-        # a = pin.getFrameAcceleration(model, data,model.getFrameId('body_link'), pin.LOCAL)
-        # print("a body: ", a)
-
-        M = pin.crba(model, data, pin_q_)
-        nle = np.matrix(pin.nle(model, data, pin_q_, pin_dq_)).T
-        f = np.matrix([.0, .0, .0] * 4).T
-        pin_tor = np.matrix([.0, .0, .0] * 6).T
-
-        # tau + J.T*f = M * ddq + nle
-        # x = tau(18)-force(12)-delta_ddx(6)
-        H = ca.DM.eye(18 + 12 + 6)
-        # H = ca.DM.zeros(18 + 12 +6)
-        for diag in range(0, 30):
-            H[diag, diag] = 0.00001
-        for diag in range(30, 36):
-            H[diag, diag] = 10
-        H[31, 31] = 1
-        # for i in range(18):
-        #     H[i, i] = 0
-        g = ca.DM.zeros(18 + 12 + 6)
-
-        # A = ca.DM.eye(18)
-        A = ca.DM.zeros(34, 36)
-        A[0:18, 0:18] = ca.DM.eye(18)
-        A[0:18, 18:30] = JF.T
-        A[0:18, 30:36] = -M * J2_pre_dpinv
-        mu_c = 0.3
-        # friction cone constrain
-        for leg in range(4):
-            if plan.contact_phase[leg] > 0.00001:
-                A[leg * 4 + 18:leg * 4 + 22, leg * 3 + 18:leg * 3 + 21] = np.matrix(
-                    [[1., 0., -mu_c], [-1., 0., -mu_c], [0., 1., -mu_c], [0., -1., -mu_c]])
-            else:
-                A[leg * 4 + 18:leg * 4 + 22, leg * 3 + 18:leg * 3 + 21] = np.matrix(
-                    [[0., 0., 0.], [0., 0., 0.], [0., 0., 0.], [0., 0., 0.]])
-        # A[0:18, 18:30] = JF.T.zeros()
-        # A[0:18, 18:30] = ca.DM.zeros(18, 12)
-        lba = ca.DM.zeros(34)
-        lba[0:18] = M * pin_ddq + nle
-        # lba[0:18] = M * (pin_ddq + J2_pre_dpinv * (ddx - Jd2 * pin_dq_ - J2 * pin_ddq)) + nle
-        lba[18:34] = -1000000.0
-
-        uba = ca.DM(lba)
-        uba[18:34] = 0
-        ubx = ca.DM.zeros(36)
-        ubx[0:6] = 0.0001
-        ubx[6:18] = 200.
-        for leg in range(4):
-            if plan.contact_phase[leg] > 0.00001:
-                ubx[18 + leg * 3 + 0: 18 + leg * 3 + 3] = 40.
-            else:
-                ubx[18 + leg * 3 + 0: 18 + leg * 3 + 3] = 0.001
-        # ubx[18:30] = 200
-        # ubx[30:33] = 50.5
-        # ubx[33:36] = 5.5
-        ubx[30:33] = 50.0
-        ubx[33:36] = 50.0
-        lbx = ca.DM(-ubx)
-        lbx[20:30:3] = 0.
-
-        qp = {'h': H.sparsity(), 'a': A.sparsity()}
-        # opts = {'printLevel': 'none'}
-        opts = {'error_on_fail': False, 'max_schur': 100, 'printLevel': 'none'}
-        S = ca.conic('S', 'qpoases', qp, opts)
-        r = S(h=H, g=g, a=A, lba=lba, uba=uba, lbx=lbx, ubx=ubx)
-        x_opt = r['x']
-        # print('x_opt:', x_opt)
-
-        pin_tor[0:18] = x_opt[0:18]
-        f[0:12] = x_opt[18:30]
-        delta_ddx = np.matrix([.0] * 6).T
-        delta_ddx[0: 6] = x_opt[30: 36]
-        # delta_ddq[0: 6] = x_opt[30: 36]
-        # print('tor == M * ddq + nle - J.T*f:', M * (pin_ddq + J2_pre_dpinv * delta_ddx) + nle - JF.T * f)
-        # print('ddq:', np.linalg.inv(M) * (pin_tor + JF.T * f - nle))
-
-        pin.forwardKinematics(model, data, pin_q_, pin_dq_, pin_ddq + J2_pre_dpinv * delta_ddx)
-        a = pin.getFrameAcceleration(model, data, model.getFrameId('LFFoot_link'), pin.LOCAL_WORLD_ALIGNED)
-        # print("a LFFoot: ", a)
-        a = pin.getFrameAcceleration(model, data, model.getFrameId('LHFoot_link'), pin.LOCAL_WORLD_ALIGNED)
-        # print("a LHFoot: ", a)
-        a = pin.getFrameAcceleration(model, data, model.getFrameId('body_link'), pin.LOCAL_WORLD_ALIGNED)
-        # print("a body cmd: ", a)
-
-        self.body_vel_des[0:3] = 2 * (self.body_pos_des - self.body_pos_fdb) \
-                                 + plan.vb[0:3] * 1
-        self.body_vel_des[3:6] = 8 * np.matrix((self.body_rot_des * self.body_rot_fdb.inv()).as_rotvec()).T \
-                                 + plan.vb[3:6] * 1
-        self.foot_vel_des = 0.005 * (plan.pf - est.pf_) + plan.vf
-        # WBC vel task 1: body control
-        dx = self.foot_vel_des
-        JF = Jfoot
-        JF_pinv = JF.T * np.linalg.inv(JF * JF.T)
-        pin_dq = JF_pinv * dx
-        N1 = np.eye(18) - JF_pinv * JF
-        # WBC vel task 2: body control
-        JB_pinv = JB.T * np.linalg.inv(JB * JB.T)
-        # N1 = np.eye(18) - JB_pinv*JB
-        J2 = JB
-        Jd2 = JdB
-        J2_pre = J2 * N1
-        J2_pre_dpinv = J2_pre.T * np.linalg.inv(J2_pre * J2_pre.T)
-        dx = self.body_vel_des
-        pin_dq = pin_dq + J2_pre_dpinv * (dx - J2 * pin_dq)
-
-        self.tor = self.ut.from_pin(pin_tor * 1. + (pin_dq - pin_dq_) * 0.1 * 0., 6)
-
-        pin.aba(model, data, pin_q_, pin_dq_, pin_tor + est.Jfoot.T * f)
-        ddq_ = self.ut.from_pin(data.ddq, 6)
-        # print('ddq_:', ddq_)
+        self.wbc.step(self.control_object, 'NspWbc')
+        self.tor = np.matrix([[.0]] * 18)
+        self.tor[6:18] = self.ut.from_pin(self.wbc.nsp_wbc.solution[18:30], 0)
 
         return self.tor
 

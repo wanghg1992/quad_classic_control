@@ -39,6 +39,9 @@ class Estimator:
         self.Jdlh = np.matrix(np.zeros([6, 18]))
         self.Jdfoot = np.matrix(np.zeros([12, 18]))
 
+        self.M = np.matrix(np.zeros([18, 18]))
+        self.nle = np.matrix(np.zeros([18, 1]))
+
         self.foot_force_ = np.array([0.] * 12)
         self.contact_state_ = np.array([0.] * 4)
 
@@ -109,6 +112,10 @@ class Estimator:
         self.Jdfoot = np.append(self.Jdrf[0:3, :], self.Jdlf[0:3, :], axis=0)
         self.Jdfoot = np.append(self.Jdfoot, self.Jdrh[0:3, :], axis=0)
         self.Jdfoot = np.append(self.Jdfoot, self.Jdlh[0:3, :], axis=0)
+
+        self.M = pin.crba(model, data, pin_q_)
+        self.nle = np.matrix(pin.nle(model, data, pin_q_, pin_dq_)).T
+
         return [self.pb_, self.Jfoot, self.Jdfoot]
 
     def getBaseVelocityLocal(self):
