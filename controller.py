@@ -245,7 +245,7 @@ class Controller:
         for leg in range(4):
             if plan.swing_phase[leg] > 0.0001:
                 foot_kp[leg * 3 + 0: leg * 3 + 3] = np.array([200., 200., 200.])
-                foot_kd[leg * 3 + 0: leg * 3 + 3] = np.array([200., 200., 200.])
+                foot_kd[leg * 3 + 0: leg * 3 + 3] = np.array([200., 200., 1000.])
             else:
                 foot_kp[leg * 3 + 0: leg * 3 + 3] = np.array([0., 0., 0.])
                 foot_kd[leg * 3 + 0: leg * 3 + 3] = np.array([100., 100., 100.])
