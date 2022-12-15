@@ -27,9 +27,26 @@ class Task:
 
 
 class NspWbc:
-    def __init__(self, task, priority_task=None):
+    def __init__(self):
+        self.task_number = 0
 
-        if priority_task is None:
+        self.x_i_pre = None
+        self.N_i_pre = None
+        self.C_i_pre = None
+        self.wb_i_pre = None
+        self.D_i_pre = None
+        self.f_i_pre = None
+        self.wf_i_pre = None
+
+        self.solution = None
+
+    def weighted_pseudo_inverse(self, matrix, weight=None):
+        if weight is None:
+            weight = np.matrix(np.eye(matrix.shape[1]))
+        return np.linalg.inv(weight) * matrix.T * np.linalg.pinv(matrix * np.linalg.inv(weight) * matrix.T)
+
+    def add_task(self, task):
+        if self.task_number == 0:
             x_im1_pre = np.matrix(np.zeros([task.A.shape[1], 1]))
             N_im1_pre = np.matrix(np.eye(task.A.shape[1]))
             C_im1_pre = None
@@ -38,24 +55,24 @@ class NspWbc:
             wb_im1_pre = np.matrix([]).T
             wf_im1_pre = np.matrix([]).T
         else:
-            x_im1_pre = priority_task.x_i_pre
-            N_im1_pre = priority_task.N_i_pre
-            C_im1_pre = priority_task.C_i_pre
-            wb_im1_pre = priority_task.wb_i_pre
-            D_im1_pre = priority_task.D_i_pre
-            f_im1_pre = priority_task.f_i_pre
-            wf_im1_pre = priority_task.wf_i_pre
+            x_im1_pre = np.matrix(self.x_i_pre)
+            N_im1_pre = np.matrix(self.N_i_pre)
+            C_im1_pre = np.matrix(self.C_i_pre)
+            wb_im1_pre = np.matrix(self.wb_i_pre)
+            D_im1_pre = np.matrix(self.D_i_pre)
+            f_im1_pre = np.matrix(self.f_i_pre)
+            wf_im1_pre = np.matrix(self.wf_i_pre)
 
-        self.A_i_pre = task.A * N_im1_pre
-        self.A_i_pre_dpinv = self.weighted_pseudo_inverse(self.A_i_pre)  # to-do: add dynamic consistent
-        self.N_i_im1 = np.matrix(np.eye(task.A.shape[1])) - self.A_i_pre_dpinv * self.A_i_pre
+        A_i_pre = task.A * N_im1_pre
+        A_i_pre_dpinv = self.weighted_pseudo_inverse(A_i_pre)  # to-do: add dynamic consistent
+        self.N_i_im1 = np.matrix(np.eye(task.A.shape[1])) - A_i_pre_dpinv * A_i_pre
         self.N_i_pre = N_im1_pre * self.N_i_im1
 
-        self.x_i_pre = x_im1_pre + self.A_i_pre_dpinv * (task.b - task.A * x_im1_pre)
+        self.x_i_pre = x_im1_pre + A_i_pre_dpinv * (task.b - task.A * x_im1_pre)
         if C_im1_pre is None:
-            self.C_i_pre = self.A_i_pre_dpinv
+            self.C_i_pre = A_i_pre_dpinv
         else:
-            self.C_i_pre = np.concatenate((self.N_i_im1 * C_im1_pre, self.A_i_pre_dpinv), axis=1)
+            self.C_i_pre = np.concatenate((self.N_i_im1 * C_im1_pre, A_i_pre_dpinv), axis=1)
 
         self.wb_i_pre = np.concatenate((wb_im1_pre, task.wb), axis=0)
 
@@ -63,12 +80,10 @@ class NspWbc:
         self.f_i_pre = np.concatenate((f_im1_pre, task.f), axis=0)
         self.wf_i_pre = np.concatenate((wf_im1_pre, task.wf), axis=0)
 
-        self.solution = None
+        self.task_number = self.task_number + 1
 
-    def weighted_pseudo_inverse(self, matrix, weight=None):
-        if weight is None:
-            weight = np.matrix(np.eye(matrix.shape[1]))
-        return np.linalg.inv(weight) * matrix.T * np.linalg.pinv(matrix * np.linalg.inv(weight) * matrix.T)
+    def clear_tasks(self):
+        self.task_number = 0
 
     def get_solution(self):
         w = np.concatenate((self.wb_i_pre, self.wf_i_pre), axis=0)
@@ -97,7 +112,7 @@ class Wbc:
         self.ut = Utility()
         self.decision_variable_num = 18 + 12 + 12
         self.tasks = list([])
-        self.nsp_wbc = None
+        self.nsp_wbc = NspWbc()
 
     def formulate_foot_acc_task(self, foot_acc_des):
         A = np.matrix(np.zeros([12, self.decision_variable_num]))
@@ -167,9 +182,9 @@ class Wbc:
         self.tasks.append(self.formulate_foot_force_task(control_object.contact_state))
         self.tasks.append(self.formulate_body_acc_task(control_object.body_acc_des))
         if wbc_type is 'NspWbc':
-            self.nsp_wbc = None
+            self.nsp_wbc.clear_tasks()
             for task in self.tasks:
-                self.nsp_wbc = NspWbc(task, self.nsp_wbc)
+                self.nsp_wbc.add_task(task)
             self.nsp_wbc.get_solution()
 
 
