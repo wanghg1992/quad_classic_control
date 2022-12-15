@@ -103,7 +103,7 @@ class Wbc:
         A = np.matrix(np.zeros([12, self.decision_variable_num]))
         A[0:12, 0:18] = self.est.Jfoot
         b = foot_acc_des - self.est.Jdfoot * self.ut.to_pin(self.est.dq_, 6)
-        wb = np.matrix([1] * 12).T
+        wb = np.matrix([1000] * 12).T
         D = np.matrix([[]] * self.decision_variable_num).T
         f = np.matrix([]).T
         wf = np.matrix([]).T
@@ -130,33 +130,41 @@ class Wbc:
         A[0:18, 18:30] = -S
         A[0:18, 30:42] = -self.est.Jfoot.T
         b = -self.est.nle
-        wb = np.matrix([1] * 18).T
+        wb = np.matrix([1000] * 18).T
         D = np.matrix([[]] * self.decision_variable_num).T
         f = np.matrix([]).T
         wf = np.matrix([]).T
         self.eom_task = Task(A, b, D, f, wb, wf)
         return self.eom_task
 
-    def formulate_swing_force_task(self, contact_state):
-        S = np.matrix(np.zeros((12, 12)))
+    def formulate_foot_force_task(self, contact_state):
+        # swing force is zero
+        Sw = np.matrix(np.zeros((12, 12)))
         for foot in range(4):
             if contact_state[foot] == 0:
-                S[foot * 3 + 0:foot * 3 + 3, foot * 3 + 0:foot * 3 + 3] = np.eye(3)
+                Sw[foot * 3 + 0:foot * 3 + 3, foot * 3 + 0:foot * 3 + 3] = np.eye(3)
         A = np.matrix(np.zeros([12, self.decision_variable_num]))
-        A[0:12, 30:42] = S * np.eye(12)
-        b = S * np.matrix(np.zeros([12, 1]))
+        A[0:12, 30:42] = Sw * np.eye(12)
+        b = Sw * np.matrix(np.zeros([12, 1]))
         wb = np.matrix([1] * 12).T
-        D = np.matrix([[]] * self.decision_variable_num).T
-        f = np.matrix([]).T
-        wf = np.matrix([]).T
-        self.swing_force_task = Task(A, b, D, f, wb, wf)
-        return self.swing_force_task
+
+        # no slip for contact foot
+        mu = 0.3
+        D = np.matrix(np.zeros([16, self.decision_variable_num]))
+        for foot in range(4):
+            if contact_state[foot] > 0:
+                D[foot * 4:(foot + 1) * 4, 30 + foot * 3:30 + (foot + 1) * 3] = np.matrix(
+                    [[1, 0, -mu], [-1, 0, -mu], [0, 1, -mu], [0, -1, -mu]])
+        f = np.matrix(np.zeros((16, 1)))
+        wf = np.matrix([1] * 16).T
+        self.foot_force_task = Task(A, b, D, f, wb, wf)
+        return self.foot_force_task
 
     def step(self, control_object, wbc_type):
         self.tasks = list([])
         self.tasks.append(self.formulate_eom_task())
         self.tasks.append(self.formulate_foot_acc_task(control_object.foot_acc_des))
-        self.tasks.append(self.formulate_swing_force_task(control_object.contact_state))
+        self.tasks.append(self.formulate_foot_force_task(control_object.contact_state))
         self.tasks.append(self.formulate_body_acc_task(control_object.body_acc_des))
         if wbc_type is 'NspWbc':
             self.nsp_wbc = None
