@@ -56,3 +56,31 @@ if __name__ == '__main__':
     sol = opti.solve()
     print(sol.value(x))
     print(sol.value(y))
+
+
+    # bug test
+    from numpy import *
+    from casadi import *
+
+    set_printoptions(linewidth=3000, threshold=sys.maxsize)
+
+    size = 30
+    rand = matrix(random.random(size=(29, 30))) / 100
+    rand[0, :] = 0
+    print(rand)
+    H = 2 * DM(rand.T * rand)
+    A = DM.ones(1, size)
+    g = DM.zeros(size)
+    uba = 1000.
+    lba = -1000
+
+    qp = {}
+    qp['h'] = H.sparsity()
+    qp['a'] = A.sparsity()
+    opt = {'error_on_fail': False}
+    S = conic('S', 'qpoases', qp, opt)
+    print(S)
+
+    r = S(h=H, g=g, a=A, lba=lba, uba=uba)
+    x_opt = r['x']
+    print('x_opt: ', x_opt)
