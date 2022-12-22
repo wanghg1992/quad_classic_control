@@ -63,9 +63,23 @@ class NspWbc:
             f_im1_pre = np.matrix(self.f_i_pre)
             wf_im1_pre = np.matrix(self.wf_i_pre)
 
+        qp_decision_num = task.A.shape[1]
+
+        # remove zero rows
+        Abw = np.concatenate((task.A, task.b, task.wb), axis=1)
+        Abw = Abw[[np.any(task.A[i] < -1e-6) or np.any(task.A[i] > 1e-6) for i in range(task.A.shape[0])], :]
+        task.A = Abw[:, 0:qp_decision_num]
+        task.b = Abw[:, qp_decision_num:qp_decision_num + 1]
+        task.wb = Abw[:, qp_decision_num + 1:qp_decision_num + 2]
+        Dfw = np.concatenate((task.D, task.f, task.wf), axis=1)
+        Dfw = Dfw[[np.any(task.D[i] < -1e-6) or np.any(task.D[i] > 1e-6) for i in range(task.D.shape[0])], :]
+        task.D = Dfw[:, 0:qp_decision_num]
+        task.f = Dfw[:, qp_decision_num:qp_decision_num + 1]
+        task.wf = Dfw[:, qp_decision_num + 1:qp_decision_num + 2]
+
         A_i_pre = task.A * N_im1_pre
         A_i_pre_dpinv = self.weighted_pseudo_inverse(A_i_pre)  # to-do: add dynamic consistent
-        self.N_i_im1 = np.matrix(np.eye(task.A.shape[1])) - A_i_pre_dpinv * A_i_pre
+        self.N_i_im1 = np.matrix(np.eye(qp_decision_num)) - A_i_pre_dpinv * A_i_pre
         self.N_i_pre = N_im1_pre * self.N_i_im1
 
         self.x_i_pre = x_im1_pre + A_i_pre_dpinv * (task.b - task.A * x_im1_pre)
@@ -95,6 +109,16 @@ class NspWbc:
         qp_A[:, self.wb_i_pre.shape[0]:] = -np.eye(self.wf_i_pre.shape[0])
 
         qp_uba = self.f_i_pre - self.D_i_pre * self.x_i_pre
+
+        qp = {'h': qp_H.sparsity(), 'a': qp_A.sparsity()}
+        # opts = {'error_on_fail': False, 'max_schur': 100, 'printLevel': 'none'}
+        opts = {'error_on_fail': True}
+        S = ca.conic('S', 'osqp', qp, opts)
+        r = S(h=qp_H, g=qp_g, a=qp_A, uba=qp_uba)
+        x_opt = r['x']
+        self.solution = self.x_i_pre + self.C_i_pre * np.matrix(x_opt)[0:self.wb_i_pre.size, 0]
+        # print('x_opt:', x_opt)
+
 
         qp = {'h': qp_H.sparsity(), 'a': qp_A.sparsity()}
         # opts = {'printLevel': 'none'}
