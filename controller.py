@@ -120,14 +120,91 @@ class NspWbc:
         # print('x_opt:', x_opt)
 
 
+class HoWbc:
+    def __init__(self):
+        self.task_number = 0
+
+        self.x_i_pre = None
+        self.N_i_pre = None
+        self.D_i_pre = None
+        self.f_i_pre = None
+        self.v_i_pre = None
+
+        self.solution = None
+
+    def weighted_pseudo_inverse(self, matrix, weight=None):
+        if weight is None:
+            weight = np.matrix(np.eye(matrix.shape[1]))
+        return np.linalg.inv(weight) * matrix.T * np.linalg.pinv(matrix * np.linalg.inv(weight) * matrix.T)
+
+    def add_task(self, task):
+        if self.task_number == 0:
+            x_im1_pre = np.matrix(np.zeros([task.A.shape[1], 1]))
+            N_im1_pre = np.matrix(np.eye(task.A.shape[1]))
+            D_im1_pre = np.matrix([[]] * task.A.shape[1]).T
+            f_im1_pre = np.matrix([]).T
+            v_im1_pre = np.matrix([]).T
+        else:
+            x_im1_pre = np.matrix(self.x_i_pre)
+            N_im1_pre = np.matrix(self.N_i_pre)
+            D_im1_pre = np.matrix(self.D_i_pre)
+            f_im1_pre = np.matrix(self.f_i_pre)
+            v_im1_pre = np.matrix(self.v_i_pre)
+
+        qp_decision_num = task.A.shape[1]
+
+        # remove zero row
+        Abw = np.concatenate((task.A, task.b, task.wb), axis=1)
+        Abw = Abw[[np.any(task.A[i] < -1e-6) or np.any(task.A[i] > 1e-6) for i in range(task.A.shape[0])], :]
+        task.A = Abw[:, 0:qp_decision_num]
+        task.b = Abw[:, qp_decision_num:qp_decision_num + 1]
+        task.wb = Abw[:, qp_decision_num + 1:qp_decision_num + 2]
+        Dfw = np.concatenate((task.D, task.f, task.wf), axis=1)
+        Dfw = Dfw[[np.any(task.D[i] < -1e-6) or np.any(task.D[i] > 1e-6) for i in range(task.D.shape[0])], :]
+        task.D = Dfw[:, 0:qp_decision_num]
+        task.f = Dfw[:, qp_decision_num:qp_decision_num + 1]
+        task.wf = Dfw[:, qp_decision_num + 1:qp_decision_num + 2]
+
+        qp_slack_num = task.D.shape[0]
+        qp_variable_num = qp_decision_num + qp_slack_num
+
+        AN = task.A * N_im1_pre
+        AN = AN[[np.any(AN[i] < -1e-6) or np.any(AN[i] > 1e-6) for i in range(AN.shape[0])], :]
+
+        qp_H = ca.DM(np.eye(qp_variable_num))
+        qp_H[0:qp_decision_num, 0:qp_decision_num] = AN.T * AN
+        qp_g = ca.DM(np.zeros((qp_variable_num, 1)))
+        qp_g[0:qp_decision_num, 0] = AN.T * (task.A * x_im1_pre - task.b)
+        qp_A = ca.DM(np.zeros((D_im1_pre.shape[0] + qp_slack_num, qp_variable_num)))
+        qp_A[:, 0:qp_decision_num] = np.concatenate((D_im1_pre, task.D), axis=0) * N_im1_pre
+        qp_A[D_im1_pre.shape[0]:, qp_decision_num:] = -np.eye(qp_slack_num)
+        qp_uba = ca.DM(np.zeros((D_im1_pre.shape[0] + qp_slack_num, 1)))
+        qp_uba[0:D_im1_pre.shape[0], 0] = f_im1_pre - D_im1_pre * x_im1_pre + v_im1_pre
+        qp_uba[D_im1_pre.shape[0]:, 0] = task.f - task.D * x_im1_pre
+
         qp = {'h': qp_H.sparsity(), 'a': qp_A.sparsity()}
-        # opts = {'printLevel': 'none'}
-        opts = {'error_on_fail': False, 'max_schur': 100, 'printLevel': 'none'}
-        S = ca.conic('S', 'qpoases', qp, opts)
+        opts = {'error_on_fail': True }
+        S = ca.conic('S', 'osqp', qp, opts)
         r = S(h=qp_H, g=qp_g, a=qp_A, uba=qp_uba)
         x_opt = r['x']
-        self.solution = self.x_i_pre + self.C_i_pre * np.matrix(x_opt)[0:self.wb_i_pre.size, 0]
+        self.solution = x_im1_pre + N_im1_pre * np.matrix(x_opt)[0:qp_decision_num]
         # print('x_opt:', x_opt)
+
+        self.x_i_pre = self.solution
+        A_i_pre = AN
+        A_i_pre_dpinv = self.weighted_pseudo_inverse(A_i_pre)  # to-do: add dynamic consistent
+        self.N_i_im1 = np.matrix(np.eye(qp_decision_num)) - A_i_pre_dpinv * A_i_pre
+        self.N_i_pre = N_im1_pre * self.N_i_im1
+        # self.N_i_pre = N_im1_pre * (np.eye(qp_decision_num) - np.linalg.pinv(task.A * N_im1_pre) * task.A * N_im1_pre)
+
+        self.D_i_pre = np.concatenate((D_im1_pre, task.D), axis=0)
+        self.f_i_pre = np.concatenate((f_im1_pre, task.f), axis=0)
+        self.v_i_pre = np.concatenate((v_im1_pre, x_opt[qp_decision_num:, 0]), axis=0)
+
+        self.task_number = self.task_number + 1
+
+    def clear_tasks(self):
+        self.task_number = 0
 
 
 class Wbc:
@@ -137,6 +214,7 @@ class Wbc:
         self.decision_variable_num = 18 + 12 + 12
         self.tasks = list([])
         self.nsp_wbc = NspWbc()
+        self.ho_wbc = HoWbc()
 
     def formulate_foot_acc_task(self, foot_acc_des):
         A = np.matrix(np.zeros([12, self.decision_variable_num]))
@@ -215,11 +293,17 @@ class Wbc:
         self.tasks.append(self.formulate_foot_acc_task(control_object.foot_acc_des))
         self.tasks.append(self.formulate_foot_force_task(control_object.contact_state))
         self.tasks.append(self.formulate_body_acc_task(control_object.body_acc_des))
+
         if wbc_type is 'NspWbc':
             self.nsp_wbc.clear_tasks()
             for task in self.tasks:
                 self.nsp_wbc.add_task(task)
             self.nsp_wbc.get_solution()
+        elif wbc_type is 'HoWbc':
+            self.ho_wbc.clear_tasks()
+            for task in self.tasks:
+                self.ho_wbc.add_task(task)
+            # self.ho_wbc.get_solution()
 
 
 class ControlObject:
@@ -306,8 +390,10 @@ class Controller:
         self.control_object.contact_state = plan.contact_phase
 
         self.wbc.step(self.control_object, 'NspWbc')
+        # self.wbc.step(self.control_object, 'HoWbc')
         self.tor = np.matrix([[.0]] * 18)
         self.tor[6:18] = self.ut.from_pin(self.wbc.nsp_wbc.solution[18:30], 0)
+        # self.tor[6:18] = self.ut.from_pin(self.wbc.ho_wbc.solution[18:30], 0)
 
         return self.tor
 
