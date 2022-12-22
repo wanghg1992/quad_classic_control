@@ -145,10 +145,20 @@ class Wbc:
         A[0:18, 18:30] = -S
         A[0:18, 30:42] = -self.est.Jfoot.T
         b = -self.est.nle
-        wb = np.matrix([1000] * 18).T
-        D = np.matrix([[]] * self.decision_variable_num).T
-        f = np.matrix([]).T
-        wf = np.matrix([]).T
+        wb = np.matrix([100000] * 18).T
+
+        acc_max = 10000.
+        torque_max = 20.
+        force_max = 100.
+        D = np.matrix(np.concatenate((np.eye(self.decision_variable_num), -np.eye(self.decision_variable_num)), axis=0))
+        f = np.matrix(np.ones((self.decision_variable_num * 2, 1)))
+        f[0:18, 0] = np.matrix(np.ones((18, 1)) * acc_max)
+        f[18:30, 0] = np.matrix(np.ones((12, 1)) * torque_max)
+        f[30:42, 0] = np.matrix(np.ones((12, 1)) * force_max)
+        f[42:60, 0] = np.matrix(np.ones((18, 1)) * acc_max)
+        f[60:72, 0] = np.matrix(np.ones((12, 1)) * torque_max)
+        f[72:84, 0] = np.matrix(np.ones((12, 1)) * force_max)
+        wf = np.matrix([1] * self.decision_variable_num * 2).T
         self.eom_task = Task(A, b, D, f, wb, wf)
         return self.eom_task
 
