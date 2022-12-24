@@ -117,6 +117,7 @@ class NspWbc:
         r = S(h=qp_H, g=qp_g, a=qp_A, uba=qp_uba)
         x_opt = r['x']
         self.solution = self.x_i_pre + self.C_i_pre * np.matrix(x_opt)[0:self.wb_i_pre.size, 0]
+        return self.solution
         # print('x_opt:', x_opt)
 
 
@@ -206,6 +207,9 @@ class HoWbc:
     def clear_tasks(self):
         self.task_number = 0
 
+    def get_solution(self):
+        return self.solution
+
 
 class Wbc:
     def __init__(self, est):
@@ -215,6 +219,7 @@ class Wbc:
         self.tasks = list([])
         self.nsp_wbc = NspWbc()
         self.ho_wbc = HoWbc()
+        self.solution = None
 
     def formulate_foot_acc_task(self, foot_acc_des):
         A = np.matrix(np.zeros([12, self.decision_variable_num]))
@@ -298,12 +303,12 @@ class Wbc:
             self.nsp_wbc.clear_tasks()
             for task in self.tasks:
                 self.nsp_wbc.add_task(task)
-            self.nsp_wbc.get_solution()
+            self.solution = self.nsp_wbc.get_solution()
         elif wbc_type is 'HoWbc':
             self.ho_wbc.clear_tasks()
             for task in self.tasks:
                 self.ho_wbc.add_task(task)
-            # self.ho_wbc.get_solution()
+            self.solution = self.ho_wbc.get_solution()
 
 
 class ControlObject:
@@ -392,8 +397,7 @@ class Controller:
         self.wbc.step(self.control_object, 'NspWbc')
         # self.wbc.step(self.control_object, 'HoWbc')
         self.tor = np.matrix([[.0]] * 18)
-        self.tor[6:18] = self.ut.from_pin(self.wbc.nsp_wbc.solution[18:30], 0)
-        # self.tor[6:18] = self.ut.from_pin(self.wbc.ho_wbc.solution[18:30], 0)
+        self.tor[6:18] = self.ut.from_pin(self.wbc.solution[18:30], 0)
 
         return self.tor
 
